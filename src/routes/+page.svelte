@@ -1,52 +1,43 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { invoke } from "@tauri-apps/api/core";
-
-  type Channel = "stable" | "beta" | "nightly";
-
-  type LatestManifestResponse = {
-    channel: Channel;
-    available: boolean;
-    tag: string | null;
-    manifest: any | null;
-    message: string | null;
-  };
-
-  const CHANNEL_KEY = "ms-manager:selected-channel";
+  import type { ApiError, Channel, LatestManifestResponse } from "$lib/api/types";
+  import { resolveLatestManifest, settingsGet, settingsSetChannel } from "$lib/api/client";
 
   let channel = $state<Channel>("stable");
   let loading = $state(false);
-  let err = $state<string | null>(null);
+  let err = $state<ApiError | null>(null);
   let latest = $state<LatestManifestResponse | null>(null);
 
-  function setChannel(next: Channel) {
-    channel = next;
+  onMount(() => {
+    void (async () => {
+      try {
+        const s = await settingsGet();
+        channel = s.channel;
+      } catch (e) {
+        err = e as ApiError;
+      }
+    })();
+  });
+
+  async function setChannel(next: Channel) {
+    err = null;
+    latest = null;
     try {
-      localStorage.setItem(CHANNEL_KEY, next);
-    } catch {
-      // ignore
+      const s = await settingsSetChannel(next);
+      channel = s.channel;
+    } catch (e) {
+      err = e as ApiError;
     }
   }
-
-  onMount(() => {
-    try {
-      const v = localStorage.getItem(CHANNEL_KEY);
-      if (v === "stable" || v === "beta" || v === "nightly") {
-        channel = v;
-      }
-    } catch {
-      // ignore
-    }
-  });
 
   async function refreshLatest() {
     loading = true;
     err = null;
     latest = null;
     try {
-      latest = await invoke("resolve_latest_manifest", { channel });
+      latest = await resolveLatestManifest(channel);
     } catch (e) {
-      err = String(e);
+      err = e as ApiError;
     } finally {
       loading = false;
     }
@@ -102,7 +93,7 @@
     {#if err}
       <div class="callout error">
         <div class="callout-title">Error</div>
-        <div class="callout-body">{err}</div>
+        <div class="callout-body">{err.message}</div>
       </div>
     {/if}
 
