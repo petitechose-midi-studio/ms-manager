@@ -120,18 +120,30 @@
   </section>
 </main>
 
-<style>
+  <style>
   :global(:root) {
-    --bg0: #f7f3ea;
-    --bg1: #efe7d6;
-    --ink: #1c1b16;
-    --muted: #5c574c;
-    --card: rgba(255, 255, 255, 0.75);
-    --stroke: rgba(30, 25, 15, 0.14);
-    --accent: #166534;
-    --accent-ink: #0b1b10;
-    --warn: #9a3412;
-    --err: #b42318;
+    color-scheme: dark;
+
+    --bg0: #0b0c0a;
+    --bg1: #12150f;
+    --ink: #f2f0e6;
+    --muted: rgba(242, 240, 230, 0.72);
+    --card: rgba(20, 22, 17, 0.78);
+    --surface: rgba(20, 22, 17, 0.64);
+    --surface-2: rgba(20, 22, 17, 0.6);
+    --stroke: rgba(242, 240, 230, 0.14);
+
+    --accent: #22c55e;
+    --accent-ink: #eafff0;
+    --accent-soft-bg: rgba(34, 197, 94, 0.16);
+    --accent-soft-stroke: rgba(34, 197, 94, 0.22);
+    --primary-border: rgba(34, 197, 94, 0.32);
+    --primary-bg-top: rgba(34, 197, 94, 0.18);
+    --primary-bg-bot: rgba(34, 197, 94, 0.08);
+
+    --ok-stroke: rgba(34, 197, 94, 0.24);
+    --warn-stroke: rgba(234, 88, 12, 0.24);
+    --err-stroke: rgba(239, 68, 68, 0.24);
 
     font-family: "IBM Plex Sans", "Space Grotesk", "Noto Sans", ui-sans-serif;
     font-size: 16px;
@@ -142,6 +154,31 @@
     text-rendering: optimizeLegibility;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
+  }
+
+  :global(:root[data-theme="light"]) {
+    color-scheme: light;
+
+    --bg0: #f7f3ea;
+    --bg1: #efe7d6;
+    --ink: #1c1b16;
+    --muted: #5c574c;
+    --card: rgba(255, 255, 255, 0.75);
+    --surface: rgba(255, 255, 255, 0.55);
+    --surface-2: rgba(255, 255, 255, 0.6);
+    --stroke: rgba(30, 25, 15, 0.14);
+
+    --accent: #166534;
+    --accent-ink: #0b1b10;
+    --accent-soft-bg: rgba(22, 101, 52, 0.12);
+    --accent-soft-stroke: rgba(22, 101, 52, 0.18);
+    --primary-border: rgba(22, 101, 52, 0.24);
+    --primary-bg-top: rgba(22, 101, 52, 0.18);
+    --primary-bg-bot: rgba(22, 101, 52, 0.08);
+
+    --ok-stroke: rgba(22, 101, 52, 0.22);
+    --warn-stroke: rgba(154, 52, 18, 0.22);
+    --err-stroke: rgba(180, 35, 24, 0.22);
   }
 
   .page {
@@ -214,7 +251,7 @@
     padding: 6px;
     border-radius: 14px;
     border: 1px solid var(--stroke);
-    background: rgba(255, 255, 255, 0.55);
+    background: var(--surface);
   }
 
   .segmented button {
@@ -229,8 +266,8 @@
   }
 
   .segmented button.selected {
-    background: rgba(22, 101, 52, 0.12);
-    border-color: rgba(22, 101, 52, 0.18);
+    background: var(--accent-soft-bg);
+    border-color: var(--accent-soft-stroke);
     color: var(--accent-ink);
   }
 
@@ -243,8 +280,8 @@
   .primary {
     width: fit-content;
     border-radius: 14px;
-    border: 1px solid rgba(22, 101, 52, 0.24);
-    background: linear-gradient(180deg, rgba(22, 101, 52, 0.18), rgba(22, 101, 52, 0.08));
+    border: 1px solid var(--primary-border);
+    background: linear-gradient(180deg, var(--primary-bg-top), var(--primary-bg-bot));
     padding: 12px 14px;
     font-weight: 700;
     cursor: pointer;
@@ -265,7 +302,7 @@
     padding: 12px 12px;
     border-radius: 14px;
     border: 1px solid var(--stroke);
-    background: rgba(255, 255, 255, 0.6);
+    background: var(--surface-2);
   }
 
   .callout-title {
@@ -274,15 +311,15 @@
   }
 
   .callout.ok {
-    border-color: rgba(22, 101, 52, 0.22);
+    border-color: var(--ok-stroke);
   }
 
   .callout.warn {
-    border-color: rgba(154, 52, 18, 0.22);
+    border-color: var(--warn-stroke);
   }
 
   .callout.error {
-    border-color: rgba(180, 35, 24, 0.22);
+    border-color: var(--err-stroke);
   }
 
   .kv {
