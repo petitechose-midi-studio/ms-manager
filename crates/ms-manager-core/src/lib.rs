@@ -15,7 +15,7 @@ pub use github::{
     extract_tags_from_releases_atom, latest_tag_for_channel, latest_tag_for_channel_from_releases,
     parse_releases_api_json, ReleaseInfo,
 };
-pub use manifest::{parse_manifest_json, Manifest, ManifestAsset, ManifestChannel};
+pub use manifest::{parse_manifest_json, select_default_assets, Manifest, ManifestAsset, ManifestChannel};
 
 #[cfg(test)]
 mod tests {
@@ -63,5 +63,35 @@ mod tests {
 
         let tags = extract_tags_from_releases_atom(xml);
         assert_eq!(tags, vec!["v0.0.1-beta.2", "nightly-2026-02-02"]);
+    }
+
+    #[test]
+    fn select_default_assets_picks_matching_os_arch() {
+        let json = r#"{
+  "schema": 2,
+  "channel": "nightly",
+  "tag": "nightly-2026-02-02",
+  "published_at": "2026-02-02T05:14:21Z",
+  "repos": [{"id": "loader", "url": "https://example.invalid", "sha": "0000000000000000000000000000000000000000"}],
+  "assets": [
+    {
+      "id": "bundle-linux-x86_64",
+      "kind": "bundle",
+      "os": "linux",
+      "arch": "x86_64",
+      "filename": "midi-studio-linux-x86_64-bundle.zip",
+      "size": 1,
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    }
+  ],
+  "install_sets": [
+    {"id": "default", "os": "linux", "arch": "x86_64", "assets": ["bundle-linux-x86_64"]}
+  ]
+}"#;
+
+        let m = parse_manifest_json(json.as_bytes()).unwrap();
+        let assets = select_default_assets(&m, "linux", "x86_64").unwrap();
+        assert_eq!(assets.len(), 1);
+        assert_eq!(assets[0].filename, "midi-studio-linux-x86_64-bundle.zip");
     }
 }

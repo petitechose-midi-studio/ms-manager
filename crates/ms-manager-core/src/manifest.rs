@@ -68,3 +68,30 @@ pub fn parse_manifest_json(bytes: &[u8]) -> Result<Manifest> {
     }
     Ok(m)
 }
+
+pub fn select_default_assets(manifest: &Manifest, os: &str, arch: &str) -> Result<Vec<ManifestAsset>> {
+    let set = manifest.install_sets.iter().find(|s| {
+        s.id == "default" && s.os.as_deref() == Some(os) && s.arch.as_deref() == Some(arch)
+    });
+    let set = match set {
+        Some(v) => v,
+        None => {
+            return Err(CoreError::NoMatchingInstallSet {
+                os: os.to_string(),
+                arch: arch.to_string(),
+            })
+        }
+    };
+
+    let mut out = Vec::with_capacity(set.assets.len());
+    for id in &set.assets {
+        let a = manifest
+            .assets
+            .iter()
+            .find(|a| a.id == *id)
+            .cloned()
+            .ok_or_else(|| CoreError::UnknownAssetId(id.clone()))?;
+        out.push(a);
+    }
+    Ok(out)
+}
