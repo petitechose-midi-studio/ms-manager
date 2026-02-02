@@ -27,4 +27,7 @@ pub enum CoreError {
 
     #[error("install set references unknown asset id: {0}")]
     UnknownAssetId(String),
+
+    #[error("unsupported platform: os={os} arch={arch}")]
+    UnsupportedPlatform { os: String, arch: String },
 }

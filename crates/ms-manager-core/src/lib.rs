@@ -4,18 +4,28 @@
 
 mod channel;
 mod crypto;
+mod dist;
 mod error;
 mod github;
 mod manifest;
+mod platform;
+mod settings;
 
 pub use channel::{BetaVersion, Channel, NightlyDate, SemVer};
 pub use crypto::{decode_b64_32, sha256_hex, verify_manifest_sig_b64};
+pub use dist::{
+    asset_url_for_tag, manifest_sig_url_for_tag, manifest_url_for_tag, public_key_b64_for_channel,
+    stable_latest_manifest_url, stable_latest_sig_url, DIST_REPO_SLUG, NIGHTLY_PUBLIC_KEY_B64,
+    STABLE_PUBLIC_KEY_B64,
+};
 pub use error::{CoreError, Result};
 pub use github::{
     extract_tags_from_releases_atom, latest_tag_for_channel, latest_tag_for_channel_from_releases,
     parse_releases_api_json, ReleaseInfo,
 };
 pub use manifest::{parse_manifest_json, select_default_assets, Manifest, ManifestAsset, ManifestChannel};
+pub use platform::{Arch, Os, Platform};
+pub use settings::{Settings, SETTINGS_SCHEMA};
 
 #[cfg(test)]
 mod tests {
