@@ -5,6 +5,14 @@ function applyTheme(theme: Theme) {
   document.documentElement.style.colorScheme = theme;
 }
 
+function isLikelyLinux(): boolean {
+  // Tauri's theme tracking on Linux depends on the webview / desktop stack and is not reliable
+  // across environments. Keep a deterministic default on Linux for now.
+  const platform = navigator.platform ?? "";
+  const ua = navigator.userAgent ?? "";
+  return /linux/i.test(platform) || /linux/i.test(ua);
+}
+
 function detectByMedia(): Theme {
   // Prefer a conservative default: if we can't confidently detect, stay on dark.
   const dark = window.matchMedia?.("(prefers-color-scheme: dark)");
@@ -22,6 +30,10 @@ function detectByMedia(): Theme {
 export async function startSystemThemeSync(): Promise<() => void> {
   // Default fallback if the platform cannot detect a theme.
   applyTheme("dark");
+
+  if (isLikelyLinux()) {
+    return () => {};
+  }
 
   // Prefer Tauri's window theme tracking when available.
   try {
