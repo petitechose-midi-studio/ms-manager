@@ -6,8 +6,17 @@ function applyTheme(theme: Theme) {
 }
 
 function detectByMedia(): Theme {
-  const mql = window.matchMedia?.("(prefers-color-scheme: light)");
-  return mql?.matches ? "light" : "dark";
+  // Prefer a conservative default: if we can't confidently detect, stay on dark.
+  const dark = window.matchMedia?.("(prefers-color-scheme: dark)");
+  const light = window.matchMedia?.("(prefers-color-scheme: light)");
+
+  const darkMatches = !!dark?.matches;
+  const lightMatches = !!light?.matches;
+
+  if (darkMatches && !lightMatches) return "dark";
+  if (lightMatches && !darkMatches) return "light";
+
+  return "dark";
 }
 
 export async function startSystemThemeSync(): Promise<() => void> {
@@ -19,19 +28,12 @@ export async function startSystemThemeSync(): Promise<() => void> {
     const mod = await import("@tauri-apps/api/window");
     const win = mod.getCurrentWindow();
 
-    const initial = (await win.theme()) ?? detectByMedia();
-    applyTheme(initial);
+    const initial = await win.theme();
+    applyTheme(initial ?? "dark");
 
     const unlisten = await win.onThemeChanged(({ payload }) => {
       applyTheme(payload ?? "dark");
     });
-
-    // Ensure native window follows system theme.
-    try {
-      await win.setTheme(undefined);
-    } catch {
-      // ignore
-    }
 
     return () => {
       try {
@@ -42,15 +44,16 @@ export async function startSystemThemeSync(): Promise<() => void> {
     };
   } catch {
     // Fall back to CSS media queries.
-    const mql = window.matchMedia?.("(prefers-color-scheme: light)");
-    applyTheme(mql?.matches ? "light" : "dark");
+    applyTheme(detectByMedia());
+
+    const mql = window.matchMedia?.("(prefers-color-scheme: dark)");
 
     if (!mql) {
       return () => {};
     }
 
-    const handler = (e: MediaQueryListEvent) => {
-      applyTheme(e.matches ? "light" : "dark");
+    const handler = () => {
+      applyTheme(detectByMedia());
     };
 
     if (typeof mql.addEventListener === "function") {

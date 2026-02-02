@@ -8,15 +8,10 @@
     <title>Tauri + SvelteKit + Typescript App</title>
     <script>
       (function () {
-        try {
-          var mql = window.matchMedia && window.matchMedia("(prefers-color-scheme: light)");
-          var theme = mql && mql.matches ? "light" : "dark";
-          document.documentElement.dataset.theme = theme;
-          document.documentElement.style.colorScheme = theme;
-        } catch (_) {
-          document.documentElement.dataset.theme = "dark";
-          document.documentElement.style.colorScheme = "dark";
-        }
+        // Fast, deterministic default to avoid theme flash.
+        // The runtime theme sync can adjust this when supported.
+        document.documentElement.dataset.theme = "dark";
+        document.documentElement.style.colorScheme = "dark";
       })();
     </script>
     %sveltekit.head%
