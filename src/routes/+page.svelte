@@ -124,32 +124,42 @@
   :global(:root) {
     color-scheme: dark;
 
-    --bg0: #0b0c0a;
-    --bg1: #12150f;
-    --ink: #f2f0e6;
-    --muted: rgba(242, 240, 230, 0.72);
-    --card: rgba(20, 22, 17, 0.78);
-    --surface: rgba(20, 22, 17, 0.64);
-    --surface-2: rgba(20, 22, 17, 0.6);
-    --stroke: rgba(242, 240, 230, 0.14);
+    --h-teal: 192;
+    --h-orange: 28;
 
-    --accent: #22c55e;
-    --accent-ink: #eafff0;
-    --accent-soft-bg: rgba(34, 197, 94, 0.16);
-    --accent-soft-stroke: rgba(34, 197, 94, 0.22);
-    --primary-border: rgba(34, 197, 94, 0.32);
-    --primary-bg-top: rgba(34, 197, 94, 0.18);
-    --primary-bg-bot: rgba(34, 197, 94, 0.08);
+    --bg0: hsl(200 34% 7%);
+    --bg1: hsl(200 28% 10%);
+    --bg-gradient:
+      radial-gradient(1200px 700px at 22% 92%, hsl(var(--h-teal) 78% 52% / 0.18), transparent 58%),
+      radial-gradient(900px 600px at 88% 12%, hsl(var(--h-orange) 95% 60% / 0.10), transparent 55%),
+      linear-gradient(180deg, hsl(200 34% 7%), hsl(200 24% 10%));
 
-    --ok-stroke: rgba(34, 197, 94, 0.24);
-    --warn-stroke: rgba(234, 88, 12, 0.24);
-    --err-stroke: rgba(239, 68, 68, 0.24);
+    --ink: hsl(210 18% 92%);
+    --muted: hsl(210 12% 72%);
+    --card: hsl(196 22% 12% / 0.78);
+    --surface: hsl(196 22% 12% / 0.58);
+    --surface-2: hsl(196 20% 15% / 0.58);
+    --stroke: hsl(200 16% 20%);
+
+    --primary: hsl(var(--h-teal) 74% 52%);
+    --accent: hsl(var(--h-orange) 92% 60%);
+    --accent-ink: var(--ink);
+
+    --accent-soft-bg: hsl(var(--h-teal) 78% 52% / 0.16);
+    --accent-soft-stroke: hsl(var(--h-teal) 78% 52% / 0.24);
+    --primary-border: hsl(var(--h-teal) 78% 52% / 0.34);
+    --primary-bg-top: hsl(var(--h-teal) 78% 52% / 0.18);
+    --primary-bg-bot: hsl(var(--h-teal) 78% 52% / 0.08);
+
+    --ok-stroke: hsl(var(--h-teal) 78% 52% / 0.28);
+    --warn-stroke: hsl(var(--h-orange) 92% 60% / 0.30);
+    --err-stroke: hsl(2 82% 58% / 0.30);
 
     font-family: "IBM Plex Sans", "Space Grotesk", "Noto Sans", ui-sans-serif;
     font-size: 16px;
     line-height: 24px;
     color: var(--ink);
-    background: radial-gradient(1200px 800px at 15% 10%, var(--bg1), var(--bg0));
+    background: var(--bg-gradient);
     font-synthesis: none;
     text-rendering: optimizeLegibility;
     -webkit-font-smoothing: antialiased;
@@ -159,26 +169,33 @@
   :global(:root[data-theme="light"]) {
     color-scheme: light;
 
-    --bg0: #f7f3ea;
-    --bg1: #efe7d6;
-    --ink: #1c1b16;
-    --muted: #5c574c;
-    --card: rgba(255, 255, 255, 0.75);
-    --surface: rgba(255, 255, 255, 0.55);
-    --surface-2: rgba(255, 255, 255, 0.6);
-    --stroke: rgba(30, 25, 15, 0.14);
+    --bg0: hsl(var(--h-orange) 26% 98%);
+    --bg1: hsl(210 28% 97%);
+    --bg-gradient:
+      radial-gradient(1200px 700px at 18% 88%, hsl(var(--h-teal) 60% 50% / 0.16), transparent 55%),
+      radial-gradient(900px 600px at 90% 12%, hsl(var(--h-orange) 95% 55% / 0.12), transparent 52%),
+      linear-gradient(180deg, hsl(var(--h-orange) 26% 99%), hsl(200 28% 96%));
 
-    --accent: #166534;
-    --accent-ink: #0b1b10;
-    --accent-soft-bg: rgba(22, 101, 52, 0.12);
-    --accent-soft-stroke: rgba(22, 101, 52, 0.18);
-    --primary-border: rgba(22, 101, 52, 0.24);
-    --primary-bg-top: rgba(22, 101, 52, 0.18);
-    --primary-bg-bot: rgba(22, 101, 52, 0.08);
+    --ink: hsl(210 18% 14%);
+    --muted: hsl(210 12% 38%);
+    --card: hsl(200 28% 96% / 0.75);
+    --surface: hsl(200 28% 96% / 0.58);
+    --surface-2: hsl(200 26% 94% / 0.62);
+    --stroke: hsl(210 18% 88%);
 
-    --ok-stroke: rgba(22, 101, 52, 0.22);
-    --warn-stroke: rgba(154, 52, 18, 0.22);
-    --err-stroke: rgba(180, 35, 24, 0.22);
+    --primary: hsl(var(--h-teal) 72% 38%);
+    --accent: hsl(var(--h-orange) 92% 56%);
+    --accent-ink: var(--ink);
+
+    --accent-soft-bg: hsl(var(--h-teal) 72% 38% / 0.16);
+    --accent-soft-stroke: hsl(var(--h-teal) 72% 38% / 0.22);
+    --primary-border: hsl(var(--h-teal) 72% 38% / 0.28);
+    --primary-bg-top: hsl(var(--h-teal) 72% 38% / 0.16);
+    --primary-bg-bot: hsl(var(--h-teal) 72% 38% / 0.08);
+
+    --ok-stroke: hsl(158 62% 38% / 0.26);
+    --warn-stroke: hsl(var(--h-orange) 92% 56% / 0.30);
+    --err-stroke: hsl(2 78% 50% / 0.26);
   }
 
   .page {
@@ -206,7 +223,11 @@
     border-radius: 12px;
     display: grid;
     place-items: center;
-    background: linear-gradient(180deg, rgba(22, 101, 52, 0.18), rgba(22, 101, 52, 0.06));
+    background: linear-gradient(
+      180deg,
+      hsl(var(--h-teal) 78% 52% / 0.18),
+      hsl(var(--h-teal) 78% 52% / 0.06)
+    );
     border: 1px solid var(--stroke);
     color: var(--accent-ink);
     font-weight: 700;
