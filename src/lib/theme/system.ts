@@ -32,6 +32,15 @@ export async function startSystemThemeSync(): Promise<() => void> {
   applyTheme("dark");
 
   if (isLikelyLinux()) {
+    // Best-effort: ask the native window to use the dark theme.
+    // Whether this affects the title bar depends on the desktop/window manager.
+    try {
+      const mod = await import("@tauri-apps/api/window");
+      const win = mod.getCurrentWindow();
+      await win.setTheme("dark");
+    } catch {
+      // ignore
+    }
     return () => {};
   }
 
