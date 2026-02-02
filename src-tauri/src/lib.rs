@@ -1,8 +1,8 @@
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 use ms_manager_core::{
     extract_tags_from_releases_atom, latest_tag_for_channel, latest_tag_for_channel_from_releases,
-    parse_manifest_json, parse_releases_api_json, verify_manifest_sig_b64, Channel, Manifest,
-    ManifestChannel,
+    parse_manifest_json, parse_releases_api_json, select_default_assets, verify_manifest_sig_b64,
+    Channel, Manifest, ManifestChannel,
 };
 
 const DIST_SLUG: &str = "petitechose-midi-studio/distribution";
@@ -17,6 +17,24 @@ pub struct LatestManifestResponse {
     pub tag: Option<String>,
     pub manifest: Option<Manifest>,
     pub message: Option<String>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct AssetPlan {
+    pub id: String,
+    pub filename: String,
+    pub sha256: String,
+    pub size: u64,
+    pub url: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct InstallPlan {
+    pub channel: String,
+    pub tag: String,
+    pub os: String,
+    pub arch: String,
+    pub assets: Vec<AssetPlan>,
 }
 
 fn parse_channel(s: &str) -> Result<Channel, String> {
@@ -61,6 +79,14 @@ fn manifest_urls_for_tag(tag: &str) -> (String, String) {
             "https://github.com/{DIST_SLUG}/releases/download/{tag}/manifest.json.sig",
             tag = tag
         ),
+    )
+}
+
+fn asset_url_for_tag(tag: &str, filename: &str) -> String {
+    format!(
+        "https://github.com/{DIST_SLUG}/releases/download/{tag}/{filename}",
+        tag = tag,
+        filename = filename
     )
 }
 
@@ -129,6 +155,23 @@ fn expected_manifest_channel(channel: Channel) -> ManifestChannel {
         Channel::Beta => ManifestChannel::Beta,
         Channel::Nightly => ManifestChannel::Nightly,
     }
+}
+
+fn platform_os_arch() -> Result<(String, String), String> {
+    let os = match std::env::consts::OS {
+        "windows" => "windows",
+        "macos" => "macos",
+        "linux" => "linux",
+        other => return Err(format!("unsupported OS: {other}")),
+    };
+
+    let arch = match std::env::consts::ARCH {
+        "x86_64" => "x86_64",
+        "aarch64" => "arm64",
+        other => return Err(format!("unsupported arch: {other}")),
+    };
+
+    Ok((os.to_string(), arch.to_string()))
 }
 
 #[tauri::command]
@@ -221,11 +264,50 @@ async fn resolve_latest_manifest(channel: String) -> Result<LatestManifestRespon
     })
 }
 
+#[tauri::command]
+async fn plan_latest_install(channel: String) -> Result<InstallPlan, String> {
+    let latest = resolve_latest_manifest(channel.clone()).await?;
+    if !latest.available {
+        return Err(latest.message.unwrap_or_else(|| "no releases".to_string()));
+    }
+
+    let manifest = latest
+        .manifest
+        .ok_or_else(|| "missing manifest in latest response".to_string())?;
+    let tag = latest
+        .tag
+        .clone()
+        .ok_or_else(|| "missing tag in latest response".to_string())?;
+
+    let (os, arch) = platform_os_arch()?;
+    let assets = select_default_assets(&manifest, &os, &arch)
+        .map_err(|e| format!("select assets failed: {e}"))?;
+
+    let plans = assets
+        .into_iter()
+        .map(|a| AssetPlan {
+            id: a.id,
+            filename: a.filename.clone(),
+            sha256: a.sha256,
+            size: a.size,
+            url: a.url.unwrap_or_else(|| asset_url_for_tag(&tag, &a.filename)),
+        })
+        .collect::<Vec<_>>();
+
+    Ok(InstallPlan {
+        channel,
+        tag,
+        os,
+        arch,
+        assets: plans,
+    })
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![resolve_latest_manifest])
+        .invoke_handler(tauri::generate_handler![resolve_latest_manifest, plan_latest_install])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
