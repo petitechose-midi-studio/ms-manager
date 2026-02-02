@@ -1,156 +1,328 @@
 <script lang="ts">
+  import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
 
-  let name = $state("");
-  let greetMsg = $state("");
+  type Channel = "stable" | "beta" | "nightly";
 
-  async function greet(event: Event) {
-    event.preventDefault();
-    // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
-    greetMsg = await invoke("greet", { name });
+  type LatestManifestResponse = {
+    channel: Channel;
+    available: boolean;
+    tag: string | null;
+    manifest: any | null;
+    message: string | null;
+  };
+
+  const CHANNEL_KEY = "ms-manager:selected-channel";
+
+  let channel = $state<Channel>("stable");
+  let loading = $state(false);
+  let err = $state<string | null>(null);
+  let latest = $state<LatestManifestResponse | null>(null);
+
+  function setChannel(next: Channel) {
+    channel = next;
+    try {
+      localStorage.setItem(CHANNEL_KEY, next);
+    } catch {
+      // ignore
+    }
+  }
+
+  onMount(() => {
+    try {
+      const v = localStorage.getItem(CHANNEL_KEY);
+      if (v === "stable" || v === "beta" || v === "nightly") {
+        channel = v;
+      }
+    } catch {
+      // ignore
+    }
+  });
+
+  async function refreshLatest() {
+    loading = true;
+    err = null;
+    latest = null;
+    try {
+      latest = await invoke("resolve_latest_manifest", { channel });
+    } catch (e) {
+      err = String(e);
+    } finally {
+      loading = false;
+    }
   }
 </script>
 
-<main class="container">
-  <h1>Welcome to Tauri + Svelte</h1>
+<main class="page">
+  <header class="hero">
+    <div class="brand">
+      <div class="mark">MS</div>
+      <div class="titles">
+        <h1>MIDI Studio Manager</h1>
+        <p>Install / update bundles from the official distribution feed.</p>
+      </div>
+    </div>
+  </header>
 
-  <div class="row">
-    <a href="https://vite.dev" target="_blank">
-      <img src="/vite.svg" class="logo vite" alt="Vite Logo" />
-    </a>
-    <a href="https://tauri.app" target="_blank">
-      <img src="/tauri.svg" class="logo tauri" alt="Tauri Logo" />
-    </a>
-    <a href="https://svelte.dev" target="_blank">
-      <img src="/svelte.svg" class="logo svelte-kit" alt="SvelteKit Logo" />
-    </a>
-  </div>
-  <p>Click on the Tauri, Vite, and SvelteKit logos to learn more.</p>
+  <section class="panel">
+    <div class="row">
+      <div class="label">Channel</div>
+      <div class="segmented" role="radiogroup" aria-label="Channel">
+        <button
+          type="button"
+          class:selected={channel === "stable"}
+          onclick={() => setChannel("stable")}
+        >
+          Stable
+        </button>
+        <button type="button" class:selected={channel === "beta"} onclick={() => setChannel("beta")}>
+          Beta
+        </button>
+        <button
+          type="button"
+          class:selected={channel === "nightly"}
+          onclick={() => setChannel("nightly")}
+        >
+          Nightly
+        </button>
+      </div>
+    </div>
 
-  <form class="row" onsubmit={greet}>
-    <input id="greet-input" placeholder="Enter a name..." bind:value={name} />
-    <button type="submit">Greet</button>
-  </form>
-  <p>{greetMsg}</p>
+    <div class="actions">
+      <button class="primary" type="button" disabled={loading} onclick={refreshLatest}>
+        {#if loading}
+          Checking latest…
+        {:else}
+          Install / Update latest
+        {/if}
+      </button>
+      <div class="hint">Updates are scoped to the selected channel. Stable is the default on first launch.</div>
+    </div>
+
+    {#if err}
+      <div class="callout error">
+        <div class="callout-title">Error</div>
+        <div class="callout-body">{err}</div>
+      </div>
+    {/if}
+
+    {#if latest}
+      {#if !latest.available}
+        <div class="callout warn">
+          <div class="callout-title">No stable release yet</div>
+          <div class="callout-body">{latest.message}</div>
+        </div>
+      {:else}
+        <div class="callout ok">
+          <div class="callout-title">Latest</div>
+          <div class="callout-body">
+            <div class="kv">
+              <div class="k">Channel</div>
+              <div class="v">{latest.channel}</div>
+              <div class="k">Tag</div>
+              <div class="v">{latest.tag}</div>
+            </div>
+          </div>
+        </div>
+      {/if}
+    {/if}
+  </section>
 </main>
 
 <style>
-.logo.vite:hover {
-  filter: drop-shadow(0 0 2em #747bff);
-}
+  :global(:root) {
+    --bg0: #f7f3ea;
+    --bg1: #efe7d6;
+    --ink: #1c1b16;
+    --muted: #5c574c;
+    --card: rgba(255, 255, 255, 0.75);
+    --stroke: rgba(30, 25, 15, 0.14);
+    --accent: #166534;
+    --accent-ink: #0b1b10;
+    --warn: #9a3412;
+    --err: #b42318;
 
-.logo.svelte-kit:hover {
-  filter: drop-shadow(0 0 2em #ff3e00);
-}
-
-:root {
-  font-family: Inter, Avenir, Helvetica, Arial, sans-serif;
-  font-size: 16px;
-  line-height: 24px;
-  font-weight: 400;
-
-  color: #0f0f0f;
-  background-color: #f6f6f6;
-
-  font-synthesis: none;
-  text-rendering: optimizeLegibility;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-  -webkit-text-size-adjust: 100%;
-}
-
-.container {
-  margin: 0;
-  padding-top: 10vh;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  text-align: center;
-}
-
-.logo {
-  height: 6em;
-  padding: 1.5em;
-  will-change: filter;
-  transition: 0.75s;
-}
-
-.logo.tauri:hover {
-  filter: drop-shadow(0 0 2em #24c8db);
-}
-
-.row {
-  display: flex;
-  justify-content: center;
-}
-
-a {
-  font-weight: 500;
-  color: #646cff;
-  text-decoration: inherit;
-}
-
-a:hover {
-  color: #535bf2;
-}
-
-h1 {
-  text-align: center;
-}
-
-input,
-button {
-  border-radius: 8px;
-  border: 1px solid transparent;
-  padding: 0.6em 1.2em;
-  font-size: 1em;
-  font-weight: 500;
-  font-family: inherit;
-  color: #0f0f0f;
-  background-color: #ffffff;
-  transition: border-color 0.25s;
-  box-shadow: 0 2px 2px rgba(0, 0, 0, 0.2);
-}
-
-button {
-  cursor: pointer;
-}
-
-button:hover {
-  border-color: #396cd8;
-}
-button:active {
-  border-color: #396cd8;
-  background-color: #e8e8e8;
-}
-
-input,
-button {
-  outline: none;
-}
-
-#greet-input {
-  margin-right: 5px;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    color: #f6f6f6;
-    background-color: #2f2f2f;
+    font-family: "IBM Plex Sans", "Space Grotesk", "Noto Sans", ui-sans-serif;
+    font-size: 16px;
+    line-height: 24px;
+    color: var(--ink);
+    background: radial-gradient(1200px 800px at 15% 10%, var(--bg1), var(--bg0));
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
 
-  a:hover {
-    color: #24c8db;
+  .page {
+    min-height: 100vh;
+    padding: 42px 22px;
+    display: grid;
+    gap: 22px;
+    place-items: start center;
   }
 
-  input,
-  button {
-    color: #ffffff;
-    background-color: #0f0f0f98;
+  .hero {
+    width: min(860px, 100%);
   }
-  button:active {
-    background-color: #0f0f0f69;
-  }
-}
 
+  .brand {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 14px;
+    align-items: center;
+  }
+
+  .mark {
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
+    display: grid;
+    place-items: center;
+    background: linear-gradient(180deg, rgba(22, 101, 52, 0.18), rgba(22, 101, 52, 0.06));
+    border: 1px solid var(--stroke);
+    color: var(--accent-ink);
+    font-weight: 700;
+    letter-spacing: 0.04em;
+  }
+
+  h1 {
+    margin: 0;
+    font-size: 22px;
+    line-height: 28px;
+  }
+
+  .titles p {
+    margin: 2px 0 0;
+    color: var(--muted);
+  }
+
+  .panel {
+    width: min(860px, 100%);
+    padding: 18px;
+    border-radius: 18px;
+    background: var(--card);
+    border: 1px solid var(--stroke);
+    backdrop-filter: blur(10px);
+  }
+
+  .row {
+    display: grid;
+    grid-template-columns: 92px 1fr;
+    gap: 12px;
+    align-items: center;
+  }
+
+  .label {
+    font-weight: 600;
+    color: var(--muted);
+  }
+
+  .segmented {
+    display: inline-flex;
+    gap: 6px;
+    padding: 6px;
+    border-radius: 14px;
+    border: 1px solid var(--stroke);
+    background: rgba(255, 255, 255, 0.55);
+  }
+
+  .segmented button {
+    appearance: none;
+    border: 1px solid transparent;
+    background: transparent;
+    padding: 10px 12px;
+    border-radius: 12px;
+    font-weight: 600;
+    color: var(--muted);
+    cursor: pointer;
+  }
+
+  .segmented button.selected {
+    background: rgba(22, 101, 52, 0.12);
+    border-color: rgba(22, 101, 52, 0.18);
+    color: var(--accent-ink);
+  }
+
+  .actions {
+    margin-top: 14px;
+    display: grid;
+    gap: 10px;
+  }
+
+  .primary {
+    width: fit-content;
+    border-radius: 14px;
+    border: 1px solid rgba(22, 101, 52, 0.24);
+    background: linear-gradient(180deg, rgba(22, 101, 52, 0.18), rgba(22, 101, 52, 0.08));
+    padding: 12px 14px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+
+  .primary:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  .hint {
+    color: var(--muted);
+    font-size: 13px;
+  }
+
+  .callout {
+    margin-top: 14px;
+    padding: 12px 12px;
+    border-radius: 14px;
+    border: 1px solid var(--stroke);
+    background: rgba(255, 255, 255, 0.6);
+  }
+
+  .callout-title {
+    font-weight: 700;
+    margin-bottom: 6px;
+  }
+
+  .callout.ok {
+    border-color: rgba(22, 101, 52, 0.22);
+  }
+
+  .callout.warn {
+    border-color: rgba(154, 52, 18, 0.22);
+  }
+
+  .callout.error {
+    border-color: rgba(180, 35, 24, 0.22);
+  }
+
+  .kv {
+    display: grid;
+    grid-template-columns: 90px 1fr;
+    gap: 6px 10px;
+    align-items: baseline;
+  }
+
+  .k {
+    color: var(--muted);
+    font-weight: 600;
+  }
+
+  .v {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+      "Courier New", monospace;
+  }
+
+  @media (max-width: 520px) {
+    .row {
+      grid-template-columns: 1fr;
+      gap: 8px;
+    }
+    .segmented {
+      width: 100%;
+      justify-content: space-between;
+    }
+    .segmented button {
+      flex: 1;
+      text-align: center;
+    }
+  }
 </style>
