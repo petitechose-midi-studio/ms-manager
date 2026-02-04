@@ -287,47 +287,37 @@
 </main>
 
   <style>
+  :global(*) {
+    box-sizing: border-box;
+  }
+
+  :global(html, body) {
+    height: 100%;
+  }
+
+  :global(body) {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--font-mono);
+  }
+
   :global(:root) {
     color-scheme: dark;
 
-    --h-teal: 192;
-    --h-orange: 28;
+    --bg: #0b0d10;
+    --panel: #0f1217;
+    --fg: #e6e6e6;
+    --muted: #9aa0a6;
+    --border: #2a2f37;
+    --border-strong: #3a404a;
 
-    --bg0: hsl(200 34% 7%);
-    --bg1: hsl(200 28% 10%);
-    --bg-gradient:
-      radial-gradient(1200px 700px at 22% 92%, hsl(var(--h-teal) 78% 52% / 0.18), transparent 58%),
-      radial-gradient(900px 600px at 88% 12%, hsl(var(--h-orange) 95% 60% / 0.10), transparent 55%),
-      linear-gradient(180deg, hsl(200 34% 7%), hsl(200 24% 10%));
+    --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+      "Courier New", monospace;
 
-    --ink: hsl(210 18% 92%);
-    --muted: hsl(210 12% 72%);
-    --card: hsl(196 22% 12% / 0.78);
-    --surface: hsl(196 22% 12% / 0.58);
-    --surface-2: hsl(196 20% 15% / 0.58);
-    --stroke: hsl(200 16% 20%);
-
-    --primary: hsl(var(--h-teal) 74% 52%);
-    --accent: hsl(var(--h-orange) 92% 60%);
-    --accent-ink: var(--ink);
-
-    --accent-soft-bg: hsl(var(--h-teal) 78% 52% / 0.16);
-    --accent-soft-stroke: hsl(var(--h-teal) 78% 52% / 0.24);
-    --primary-border: hsl(var(--h-teal) 78% 52% / 0.34);
-    --primary-bg-top: hsl(var(--h-teal) 78% 52% / 0.18);
-    --primary-bg-bot: hsl(var(--h-teal) 78% 52% / 0.08);
-
-    --ok-stroke: hsl(var(--h-teal) 78% 52% / 0.28);
-    --warn-stroke: hsl(var(--h-orange) 92% 60% / 0.30);
-    --err-stroke: hsl(2 82% 58% / 0.30);
-
-    font-family: "IBM Plex Sans", "Space Grotesk", "Noto Sans", ui-sans-serif;
-    font-size: 16px;
-    line-height: 24px;
-    color: var(--ink);
-    background: var(--bg-gradient);
-    font-synthesis: none;
-    text-rendering: optimizeLegibility;
+    font-size: 14px;
+    line-height: 20px;
+    text-rendering: geometricPrecision;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
@@ -335,215 +325,202 @@
   :global(:root[data-theme="light"]) {
     color-scheme: light;
 
-    --bg0: hsl(var(--h-orange) 26% 98%);
-    --bg1: hsl(210 28% 97%);
-    --bg-gradient:
-      radial-gradient(1200px 700px at 18% 88%, hsl(var(--h-teal) 60% 50% / 0.16), transparent 55%),
-      radial-gradient(900px 600px at 90% 12%, hsl(var(--h-orange) 95% 55% / 0.12), transparent 52%),
-      linear-gradient(180deg, hsl(var(--h-orange) 26% 99%), hsl(200 28% 96%));
-
-    --ink: hsl(210 18% 14%);
-    --muted: hsl(210 12% 38%);
-    --card: hsl(200 28% 96% / 0.75);
-    --surface: hsl(200 28% 96% / 0.58);
-    --surface-2: hsl(200 26% 94% / 0.62);
-    --stroke: hsl(210 18% 88%);
-
-    --primary: hsl(var(--h-teal) 72% 38%);
-    --accent: hsl(var(--h-orange) 92% 56%);
-    --accent-ink: var(--ink);
-
-    --accent-soft-bg: hsl(var(--h-teal) 72% 38% / 0.16);
-    --accent-soft-stroke: hsl(var(--h-teal) 72% 38% / 0.22);
-    --primary-border: hsl(var(--h-teal) 72% 38% / 0.28);
-    --primary-bg-top: hsl(var(--h-teal) 72% 38% / 0.16);
-    --primary-bg-bot: hsl(var(--h-teal) 72% 38% / 0.08);
-
-    --ok-stroke: hsl(158 62% 38% / 0.26);
-    --warn-stroke: hsl(var(--h-orange) 92% 56% / 0.30);
-    --err-stroke: hsl(2 78% 50% / 0.26);
+    --bg: #f7f7f7;
+    --panel: #ffffff;
+    --fg: #101318;
+    --muted: #4b5563;
+    --border: #d4d4d4;
+    --border-strong: #a3a3a3;
   }
 
   .page {
-    min-height: 100vh;
-    padding: 42px 22px;
-    display: grid;
-    gap: 22px;
-    place-items: start center;
+    height: 100vh;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    width: min(740px, 100%);
+    margin: 0 auto;
+  }
+
+  .hero,
+  .panel {
+    border: 1px solid var(--border);
+    background: var(--panel);
+    border-radius: 10px;
   }
 
   .hero {
-    width: min(860px, 100%);
+    padding: 12px;
   }
 
   .brand {
     display: grid;
     grid-template-columns: auto 1fr;
-    gap: 14px;
-    align-items: center;
-  }
-
-  .mark {
-    width: 44px;
-    height: 44px;
-    border-radius: 12px;
-    display: grid;
-    place-items: center;
-    background: linear-gradient(
-      180deg,
-      hsl(var(--h-teal) 78% 52% / 0.18),
-      hsl(var(--h-teal) 78% 52% / 0.06)
-    );
-    border: 1px solid var(--stroke);
-    color: var(--accent-ink);
-    font-weight: 700;
-    letter-spacing: 0.04em;
-  }
-
-  h1 {
-    margin: 0;
-    font-size: 22px;
-    line-height: 28px;
-  }
-
-  .titles p {
-    margin: 2px 0 0;
-    color: var(--muted);
-  }
-
-  .panel {
-    width: min(860px, 100%);
-    padding: 18px;
-    border-radius: 18px;
-    background: var(--card);
-    border: 1px solid var(--stroke);
-    backdrop-filter: blur(10px);
-  }
-
-  .row {
-    display: grid;
-    grid-template-columns: 92px 1fr;
     gap: 12px;
     align-items: center;
   }
 
-  .label {
-    font-weight: 600;
+  .mark {
+    padding: 6px 8px;
+    border-radius: 8px;
+    border: 1px solid var(--border);
+    font-weight: 800;
+    letter-spacing: 0.06em;
+  }
+
+  h1 {
+    margin: 0;
+    font-size: 16px;
+    line-height: 20px;
+    font-weight: 800;
+  }
+
+  .titles p {
+    margin: 4px 0 0;
     color: var(--muted);
+    font-size: 12px;
+    line-height: 16px;
+  }
+
+  .panel {
+    padding: 12px;
+  }
+
+  .row {
+    display: grid;
+    grid-template-columns: 86px 1fr;
+    gap: 10px;
+    align-items: center;
+    padding: 6px 0;
+  }
+
+  .label {
+    color: var(--muted);
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-size: 11px;
   }
 
   .segmented {
-    display: inline-flex;
-    gap: 6px;
-    padding: 6px;
-    border-radius: 14px;
-    border: 1px solid var(--stroke);
-    background: var(--surface);
+    display: grid;
+    grid-auto-flow: column;
+    grid-auto-columns: 1fr;
+    gap: 8px;
   }
 
   .segmented button {
     appearance: none;
-    border: 1px solid transparent;
+    font: inherit;
+    padding: 10px 10px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
     background: transparent;
-    padding: 10px 12px;
-    border-radius: 12px;
-    font-weight: 600;
     color: var(--muted);
     cursor: pointer;
-  }
-
-  .segmented button:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-weight: 800;
+    text-align: center;
+    user-select: none;
   }
 
   .segmented button.selected {
-    background: var(--accent-soft-bg);
-    border-color: var(--accent-soft-stroke);
-    color: var(--accent-ink);
+    background: var(--fg);
+    color: var(--bg);
+    border-color: var(--fg);
+  }
+
+  button:focus-visible {
+    outline: 2px solid var(--border-strong);
+    outline-offset: 2px;
+  }
+
+  button:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
   }
 
   .actions {
-    margin-top: 14px;
+    margin-top: 8px;
     display: grid;
     gap: 10px;
   }
 
   .buttons {
-    display: flex;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
     gap: 10px;
-    align-items: center;
+  }
+
+  .primary,
+  .ghost {
+    appearance: none;
+    font: inherit;
+    padding: 12px 12px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--fg);
+    font-weight: 900;
+    letter-spacing: 0.02em;
+    text-align: left;
+    cursor: pointer;
   }
 
   .primary {
-    width: fit-content;
-    border-radius: 14px;
-    border: 1px solid var(--primary-border);
-    background: linear-gradient(180deg, var(--primary-bg-top), var(--primary-bg-bot));
-    padding: 12px 14px;
-    font-weight: 700;
-    cursor: pointer;
+    background: var(--fg);
+    color: var(--bg);
+    border-color: var(--fg);
   }
 
   .ghost {
-    width: fit-content;
-    border-radius: 14px;
-    border: 1px solid var(--stroke);
-    background: transparent;
-    padding: 12px 14px;
-    font-weight: 700;
     color: var(--muted);
-    cursor: pointer;
-  }
-
-  .primary:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
-  }
-
-  .ghost:disabled {
-    opacity: 0.6;
-    cursor: not-allowed;
   }
 
   .hint {
     color: var(--muted);
-    font-size: 13px;
+    font-size: 12px;
+    line-height: 16px;
   }
 
   .progress {
     padding: 10px 12px;
-    border-radius: 14px;
-    border: 1px solid var(--stroke);
-    background: var(--surface);
+    border-radius: 10px;
+    border: 1px dashed var(--border);
     color: var(--muted);
-    font-size: 13px;
+    font-size: 12px;
+    line-height: 16px;
   }
 
   .callout {
-    margin-top: 14px;
-    padding: 12px 12px;
-    border-radius: 14px;
-    border: 1px solid var(--stroke);
-    background: var(--surface-2);
+    margin-top: 10px;
+    padding: 10px 12px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
   }
 
   .callout-title {
-    font-weight: 700;
+    font-weight: 900;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-size: 11px;
     margin-bottom: 6px;
+    color: var(--muted);
   }
 
   .callout.ok {
-    border-color: var(--ok-stroke);
+    border-style: solid;
   }
 
   .callout.warn {
-    border-color: var(--warn-stroke);
+    border-style: dashed;
   }
 
   .callout.error {
-    border-color: var(--err-stroke);
+    border-style: double;
+    border-width: 3px;
   }
 
   .kv {
@@ -555,26 +532,29 @@
 
   .k {
     color: var(--muted);
-    font-weight: 600;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-size: 11px;
   }
 
   .v {
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
-      "Courier New", monospace;
+    overflow-wrap: anywhere;
   }
 
-  @media (max-width: 520px) {
+  @media (max-width: 560px) {
+    .page {
+      padding: 12px;
+    }
     .row {
       grid-template-columns: 1fr;
-      gap: 8px;
+    }
+    .buttons {
+      grid-template-columns: 1fr;
     }
     .segmented {
-      width: 100%;
-      justify-content: space-between;
-    }
-    .segmented button {
-      flex: 1;
-      text-align: center;
+      grid-auto-flow: row;
+      grid-auto-columns: auto;
     }
   }
-</style>
+  </style>
