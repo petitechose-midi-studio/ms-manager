@@ -12,7 +12,15 @@ export type ApiError = {
 export type Settings = {
   schema: number;
   channel: Channel;
+  profile: string;
   pinned_tag?: string | null;
+};
+
+export type InstallState = {
+  schema: number;
+  channel: Channel;
+  profile: string;
+  tag: string;
 };
 
 export type Platform = {
@@ -69,6 +77,7 @@ export type LatestManifestResponse = {
 
 export type AssetPlan = {
   id: string;
+  kind: string;
   filename: string;
   sha256: string;
   size: number;
@@ -78,6 +87,39 @@ export type AssetPlan = {
 export type InstallPlan = {
   channel: Channel;
   tag: string;
+  profile: string;
   platform: Platform;
   assets: AssetPlan[];
 };
+
+export type Status = {
+  settings: Settings;
+  installed: InstallState | null;
+  platform: Platform;
+  payload_root: string;
+};
+
+export type InstallEvent =
+  | {
+      type: "begin";
+      channel: Channel;
+      tag: string;
+      profile: string;
+      assets_total: number;
+    }
+  | {
+      type: "downloading";
+      index: number;
+      total: number;
+      asset_id: string;
+      filename: string;
+    }
+  | {
+      type: "applying";
+      step: string;
+    }
+  | {
+      type: "done";
+      tag: string;
+      profile: string;
+    };
