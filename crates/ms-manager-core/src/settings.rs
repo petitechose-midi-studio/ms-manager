@@ -4,10 +4,16 @@ use crate::Channel;
 
 pub const SETTINGS_SCHEMA: u32 = 1;
 
+fn default_profile() -> String {
+    "default".to_string()
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Settings {
     pub schema: u32,
     pub channel: Channel,
+    #[serde(default = "default_profile")]
+    pub profile: String,
     #[serde(default)]
     pub pinned_tag: Option<String>,
 }
@@ -17,6 +23,7 @@ impl Default for Settings {
         Self {
             schema: SETTINGS_SCHEMA,
             channel: Channel::Stable,
+            profile: default_profile(),
             pinned_tag: None,
         }
     }

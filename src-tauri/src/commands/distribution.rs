@@ -1,39 +1,11 @@
-use serde::Serialize;
 use tauri::State;
 
-use ms_manager_core::{
-    asset_url_for_tag, select_default_assets, Channel, Manifest, Platform,
-};
+use ms_manager_core::{asset_url_for_tag, select_install_set_assets, Channel, Platform};
 
 use crate::api_error::{ApiError, ApiResult};
+use crate::models::{AssetPlan, InstallPlan, LatestManifestResponse};
 use crate::services::distribution;
 use crate::state::AppState;
-
-#[derive(Debug, Clone, Serialize)]
-pub struct LatestManifestResponse {
-    pub channel: Channel,
-    pub available: bool,
-    pub tag: Option<String>,
-    pub manifest: Option<Manifest>,
-    pub message: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct AssetPlan {
-    pub id: String,
-    pub filename: String,
-    pub sha256: String,
-    pub size: u64,
-    pub url: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct InstallPlan {
-    pub channel: Channel,
-    pub tag: String,
-    pub platform: Platform,
-    pub assets: Vec<AssetPlan>,
-}
 
 #[tauri::command]
 pub async fn resolve_latest_manifest(
@@ -53,7 +25,16 @@ pub async fn resolve_latest_manifest(
 #[tauri::command]
 pub async fn plan_latest_install(
     channel: Channel,
+    profile: String,
     state: State<'_, AppState>,
+) -> ApiResult<InstallPlan> {
+    plan_latest_install_internal(channel, &profile, &state).await
+}
+
+pub(crate) async fn plan_latest_install_internal(
+    channel: Channel,
+    profile: &str,
+    state: &AppState,
 ) -> ApiResult<InstallPlan> {
     let out = distribution::resolve_latest_manifest(&state.http, channel).await?;
     if !out.available {
@@ -70,12 +51,23 @@ pub async fn plan_latest_install(
         .tag
         .ok_or_else(|| ApiError::new("internal_error", "missing tag"))?;
 
+    if profile.is_empty() {
+        return Err(ApiError::new("invalid_profile", "profile cannot be empty"));
+    }
+
     let platform = Platform::current()?;
-    let assets = select_default_assets(&manifest, platform.os.as_str(), platform.arch.as_str())?;
+    let assets = select_install_set_assets(
+        &manifest,
+        profile,
+        platform.os.as_str(),
+        platform.arch.as_str(),
+    )?;
+
     let plans = assets
         .into_iter()
         .map(|a| AssetPlan {
             id: a.id,
+            kind: a.kind,
             filename: a.filename.clone(),
             sha256: a.sha256,
             size: a.size,
@@ -86,6 +78,7 @@ pub async fn plan_latest_install(
     Ok(InstallPlan {
         channel,
         tag,
+        profile: profile.to_string(),
         platform,
         assets: plans,
     })

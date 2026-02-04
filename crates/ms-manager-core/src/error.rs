@@ -22,8 +22,12 @@ pub enum CoreError {
     #[error("unexpected channel value: {0}")]
     InvalidChannel(String),
 
-    #[error("no matching install set for os={os} arch={arch}")]
-    NoMatchingInstallSet { os: String, arch: String },
+    #[error("no matching install set: id={id} os={os} arch={arch}")]
+    NoMatchingInstallSet {
+        id: String,
+        os: String,
+        arch: String,
+    },
 
     #[error("install set references unknown asset id: {0}")]
     UnknownAssetId(String),

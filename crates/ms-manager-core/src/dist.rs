@@ -13,15 +13,11 @@ pub fn public_key_b64_for_channel(channel: Channel) -> &'static str {
 }
 
 pub fn stable_latest_manifest_url() -> String {
-    format!(
-        "https://github.com/{DIST_REPO_SLUG}/releases/latest/download/manifest.json"
-    )
+    format!("https://github.com/{DIST_REPO_SLUG}/releases/latest/download/manifest.json")
 }
 
 pub fn stable_latest_sig_url() -> String {
-    format!(
-        "https://github.com/{DIST_REPO_SLUG}/releases/latest/download/manifest.json.sig"
-    )
+    format!("https://github.com/{DIST_REPO_SLUG}/releases/latest/download/manifest.json.sig")
 }
 
 pub fn manifest_url_for_tag(tag: &str) -> String {

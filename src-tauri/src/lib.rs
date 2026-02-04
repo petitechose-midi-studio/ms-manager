@@ -1,5 +1,7 @@
 mod api_error;
 mod commands;
+mod layout;
+mod models;
 mod services;
 mod state;
 mod storage;
@@ -18,8 +20,11 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::distribution::resolve_latest_manifest,
             commands::distribution::plan_latest_install,
+            commands::install::install_latest,
             commands::settings::settings_get,
             commands::settings::settings_set_channel,
+            commands::settings::settings_set_profile,
+            commands::status::status_get,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -69,14 +69,20 @@ pub fn parse_manifest_json(bytes: &[u8]) -> Result<Manifest> {
     Ok(m)
 }
 
-pub fn select_default_assets(manifest: &Manifest, os: &str, arch: &str) -> Result<Vec<ManifestAsset>> {
+pub fn select_install_set_assets(
+    manifest: &Manifest,
+    install_set_id: &str,
+    os: &str,
+    arch: &str,
+) -> Result<Vec<ManifestAsset>> {
     let set = manifest.install_sets.iter().find(|s| {
-        s.id == "default" && s.os.as_deref() == Some(os) && s.arch.as_deref() == Some(arch)
+        s.id == install_set_id && s.os.as_deref() == Some(os) && s.arch.as_deref() == Some(arch)
     });
     let set = match set {
         Some(v) => v,
         None => {
             return Err(CoreError::NoMatchingInstallSet {
+                id: install_set_id.to_string(),
                 os: os.to_string(),
                 arch: arch.to_string(),
             })
@@ -94,4 +100,12 @@ pub fn select_default_assets(manifest: &Manifest, os: &str, arch: &str) -> Resul
         out.push(a);
     }
     Ok(out)
+}
+
+pub fn select_default_assets(
+    manifest: &Manifest,
+    os: &str,
+    arch: &str,
+) -> Result<Vec<ManifestAsset>> {
+    select_install_set_assets(manifest, "default", os, arch)
 }

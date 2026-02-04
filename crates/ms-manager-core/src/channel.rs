@@ -1,5 +1,6 @@
 use regex::Regex;
 use serde::{Deserialize, Serialize};
+use std::cmp::Ordering;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -54,9 +55,8 @@ pub fn parse_stable_tag(tag: &str) -> Option<SemVer> {
 pub fn parse_beta_tag(tag: &str) -> Option<BetaVersion> {
     // vMAJOR.MINOR.PATCH-beta.N
     static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
-    let re = RE.get_or_init(|| {
-        Regex::new(r"^v(\d+)\.(\d+)\.(\d+)-beta\.(\d+)$").expect("valid regex")
-    });
+    let re =
+        RE.get_or_init(|| Regex::new(r"^v(\d+)\.(\d+)\.(\d+)-beta\.(\d+)$").expect("valid regex"));
     let cap = re.captures(tag)?;
     Some(BetaVersion {
         base: SemVer {
@@ -71,13 +71,20 @@ pub fn parse_beta_tag(tag: &str) -> Option<BetaVersion> {
 pub fn parse_nightly_tag(tag: &str) -> Option<NightlyDate> {
     // nightly-YYYY-MM-DD
     static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
-    let re = RE.get_or_init(|| {
-        Regex::new(r"^nightly-(\d{4})-(\d{2})-(\d{2})$").expect("valid regex")
-    });
+    let re =
+        RE.get_or_init(|| Regex::new(r"^nightly-(\d{4})-(\d{2})-(\d{2})$").expect("valid regex"));
     let cap = re.captures(tag)?;
     Some(NightlyDate {
         year: cap.get(1)?.as_str().parse().ok()?,
         month: cap.get(2)?.as_str().parse().ok()?,
         day: cap.get(3)?.as_str().parse().ok()?,
     })
+}
+
+pub fn compare_tags(channel: Channel, a: &str, b: &str) -> Option<Ordering> {
+    match channel {
+        Channel::Stable => Some(parse_stable_tag(a)?.cmp(&parse_stable_tag(b)?)),
+        Channel::Beta => Some(parse_beta_tag(a)?.cmp(&parse_beta_tag(b)?)),
+        Channel::Nightly => Some(parse_nightly_tag(a)?.cmp(&parse_nightly_tag(b)?)),
+    }
 }

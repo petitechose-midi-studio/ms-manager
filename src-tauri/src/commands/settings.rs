@@ -14,3 +14,8 @@ pub fn settings_get(state: State<'_, AppState>) -> ApiResult<Settings> {
 pub fn settings_set_channel(channel: Channel, state: State<'_, AppState>) -> ApiResult<Settings> {
     state.settings_set_channel(channel)
 }
+
+#[tauri::command]
+pub fn settings_set_profile(profile: String, state: State<'_, AppState>) -> ApiResult<Settings> {
+    state.settings_set_profile(profile)
+}
