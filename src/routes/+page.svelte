@@ -339,15 +339,14 @@
     display: flex;
     flex-direction: column;
     gap: 12px;
-    width: min(740px, 100%);
-    margin: 0 auto;
+    width: 100%;
   }
 
   .hero,
   .panel {
     border: 1px solid var(--border);
     background: var(--panel);
-    border-radius: 10px;
+    border-radius: 6px;
   }
 
   .hero {
@@ -363,7 +362,7 @@
 
   .mark {
     padding: 6px 8px;
-    border-radius: 8px;
+    border-radius: 6px;
     border: 1px solid var(--border);
     font-weight: 800;
     letter-spacing: 0.06em;
@@ -414,7 +413,7 @@
     appearance: none;
     font: inherit;
     padding: 10px 10px;
-    border-radius: 10px;
+    border-radius: 6px;
     border: 1px solid var(--border);
     background: transparent;
     color: var(--muted);
@@ -459,7 +458,7 @@
     appearance: none;
     font: inherit;
     padding: 12px 12px;
-    border-radius: 10px;
+    border-radius: 6px;
     border: 1px solid var(--border);
     background: transparent;
     color: var(--fg);
@@ -487,7 +486,7 @@
 
   .progress {
     padding: 10px 12px;
-    border-radius: 10px;
+    border-radius: 6px;
     border: 1px dashed var(--border);
     color: var(--muted);
     font-size: 12px;
@@ -497,7 +496,7 @@
   .callout {
     margin-top: 10px;
     padding: 10px 12px;
-    border-radius: 10px;
+    border-radius: 6px;
     border: 1px solid var(--border);
   }
 
