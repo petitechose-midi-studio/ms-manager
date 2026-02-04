@@ -33,7 +33,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 20
           cache: npm
 
       - name: Install deps
@@ -45,14 +45,25 @@ jobs:
       - name: Build
         run: npm run build
 
-  tauri:
-    name: tauri (cargo check)
-    runs-on: ubuntu-latest
+  tauri_build:
+    name: tauri build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
       - name: Install Linux deps
+        if: matrix.os == 'ubuntu-latest'
         shell: bash
         run: |
           set -euo pipefail
@@ -68,6 +79,8 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Check
-        run: cargo check
-        working-directory: src-tauri
+      - name: Install deps
+        run: npm ci --no-audit --no-fund
+
+      - name: Build (no bundle)
+        run: npm run tauri build -- --no-bundle
