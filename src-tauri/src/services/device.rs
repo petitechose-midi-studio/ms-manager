@@ -69,6 +69,10 @@ fn parse_list_event(json_line: &str) -> (u32, Vec<DeviceTarget>) {
     if ev.event != "list" {
         return (0, Vec::new());
     }
-    let count = if ev.count > 0 { ev.count } else { ev.targets.len() as u32 };
+    let count = if ev.count > 0 {
+        ev.count
+    } else {
+        ev.targets.len() as u32
+    };
     (count, ev.targets)
 }

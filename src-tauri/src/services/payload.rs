@@ -152,11 +152,7 @@ fn relocate_payload_root_blocking(
         Err(e) => {
             return Err(ApiError::new(
                 "payload_root_move_failed",
-                format!(
-                    "move {} -> {}: {e}",
-                    old_root.display(),
-                    new_root.display()
-                ),
+                format!("move {} -> {}: {e}", old_root.display(), new_root.display()),
             ));
         }
     }
@@ -172,13 +168,13 @@ fn copy_swap_payload_root(
 
     let staging = new_root.with_extension("staging");
     if staging.exists() {
-        return Err(ApiError::new(
-            "payload_root_exists",
-            "staging directory already exists",
-        )
-        .with_details(serde_json::json!({
-            "staging": staging.display().to_string(),
-        })));
+        return Err(
+            ApiError::new("payload_root_exists", "staging directory already exists").with_details(
+                serde_json::json!({
+                    "staging": staging.display().to_string(),
+                }),
+            ),
+        );
     }
 
     std::fs::create_dir_all(&staging).map_err(|e| {
@@ -212,11 +208,7 @@ fn copy_swap_payload_root(
     std::fs::rename(&staging, new_root).map_err(|e| {
         ApiError::new(
             "payload_root_move_failed",
-            format!(
-                "move {} -> {}: {e}",
-                staging.display(),
-                new_root.display()
-            ),
+            format!("move {} -> {}: {e}", staging.display(), new_root.display()),
         )
     })?;
 
@@ -266,12 +258,9 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> ApiResult<()> {
         )
     })?;
 
-    for entry in std::fs::read_dir(src).map_err(|e| {
-        ApiError::new(
-            "io_read_failed",
-            format!("read dir {}: {e}", src.display()),
-        )
-    })? {
+    for entry in std::fs::read_dir(src)
+        .map_err(|e| ApiError::new("io_read_failed", format!("read dir {}: {e}", src.display())))?
+    {
         let entry = entry.map_err(|e| ApiError::new("io_read_failed", e.to_string()))?;
         let ft = entry
             .file_type()

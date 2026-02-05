@@ -6,9 +6,9 @@ mod services;
 mod state;
 mod storage;
 
-use tauri::Manager;
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::{TrayIconBuilder, TrayIconEvent};
+use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -34,9 +34,7 @@ pub fn run() {
             let show = MenuItemBuilder::new("Open ms-manager")
                 .id("show")
                 .build(app)?;
-            let quit = MenuItemBuilder::new("Quit")
-                .id("quit")
-                .build(app)?;
+            let quit = MenuItemBuilder::new("Quit").id("quit").build(app)?;
             let menu = MenuBuilder::new(app).items(&[&show, &quit]).build()?;
 
             TrayIconBuilder::new()
@@ -49,7 +47,27 @@ pub fn run() {
                         }
                     }
                     "quit" => {
-                        app.exit(0);
+                        let app = app.clone();
+                        tauri::async_runtime::spawn(async move {
+                            // Best-effort: ask the daemon to exit cleanly.
+                            let _ = services::bridge_ctl::send_command(
+                                services::bridge_ctl::DEFAULT_CONTROL_PORT,
+                                "shutdown",
+                                std::time::Duration::from_millis(700),
+                            )
+                            .await;
+
+                            // Give it a moment to release ports/lock.
+                            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+
+                            // Strict: ensure no oc-bridge daemon is left running.
+                            let layout = app.state::<state::AppState>().layout_get();
+                            let exe = services::payload::oc_bridge_path(&layout);
+                            let _ = services::bridge_process::kill_oc_bridge_daemons(&exe);
+                            let _ = services::bridge_process::kill_all_oc_bridge_daemons();
+
+                            app.exit(0);
+                        });
                     }
                     _ => {}
                 })
@@ -92,6 +110,7 @@ pub fn run() {
             commands::autostart::manager_autostart_get,
             commands::autostart::manager_autostart_set,
             commands::bridge::bridge_status_get,
+            commands::bridge::bridge_log_open,
             commands::device::device_status_get,
             commands::flash::flash_firmware,
             commands::install::install_latest,

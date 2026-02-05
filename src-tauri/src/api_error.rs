@@ -41,11 +41,19 @@ impl From<ms_manager_core::CoreError> for ApiError {
         match err {
             CoreError::Signature => ApiError::new("manifest_sig_invalid", err.to_string()),
             CoreError::PublicKey => ApiError::new("public_key_invalid", err.to_string()),
-            CoreError::UnsupportedSchema(_) => ApiError::new("manifest_schema_unsupported", err.to_string()),
+            CoreError::UnsupportedSchema(_) => {
+                ApiError::new("manifest_schema_unsupported", err.to_string())
+            }
             CoreError::ManifestJson(_) => ApiError::new("manifest_json_invalid", err.to_string()),
-            CoreError::NoMatchingInstallSet { .. } => ApiError::new("no_matching_install_set", err.to_string()),
-            CoreError::UnknownAssetId(_) => ApiError::new("manifest_invalid_install_set", err.to_string()),
-            CoreError::UnsupportedPlatform { .. } => ApiError::new("unsupported_platform", err.to_string()),
+            CoreError::NoMatchingInstallSet { .. } => {
+                ApiError::new("no_matching_install_set", err.to_string())
+            }
+            CoreError::UnknownAssetId(_) => {
+                ApiError::new("manifest_invalid_install_set", err.to_string())
+            }
+            CoreError::UnsupportedPlatform { .. } => {
+                ApiError::new("unsupported_platform", err.to_string())
+            }
             CoreError::Base64(_) => ApiError::new("base64_invalid", err.to_string()),
             CoreError::InvalidChannel(_) => ApiError::new("invalid_channel", err.to_string()),
         }

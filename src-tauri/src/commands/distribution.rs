@@ -48,7 +48,10 @@ pub async fn resolve_manifest_for_tag(
 }
 
 #[tauri::command]
-pub async fn list_channel_tags(channel: Channel, state: State<'_, AppState>) -> ApiResult<Vec<String>> {
+pub async fn list_channel_tags(
+    channel: Channel,
+    state: State<'_, AppState>,
+) -> ApiResult<Vec<String>> {
     distribution::list_tags_for_channel(&state.http, channel).await
 }
 
@@ -104,7 +107,9 @@ pub(crate) async fn plan_install_internal(
             filename: a.filename.clone(),
             sha256: a.sha256,
             size: a.size,
-            url: a.url.unwrap_or_else(|| asset_url_for_tag(&tag, &a.filename)),
+            url: a
+                .url
+                .unwrap_or_else(|| asset_url_for_tag(&tag, &a.filename)),
         })
         .collect::<Vec<_>>();
 

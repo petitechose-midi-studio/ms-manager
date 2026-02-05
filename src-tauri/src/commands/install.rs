@@ -1,5 +1,5 @@
-use tauri::State;
 use tauri::Emitter;
+use tauri::State;
 
 use ms_manager_core::{compare_tags, Channel, InstallState, INSTALL_STATE_SCHEMA};
 
@@ -23,9 +23,13 @@ pub async fn install_latest(
 }
 
 #[tauri::command]
-pub async fn install_selected(app: tauri::AppHandle, state: State<'_, AppState>) -> ApiResult<InstallState> {
+pub async fn install_selected(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+) -> ApiResult<InstallState> {
     let s = state.settings_get();
-    let plan = plan_install_internal(s.channel, &s.profile, s.pinned_tag.as_deref(), &state).await?;
+    let plan =
+        plan_install_internal(s.channel, &s.profile, s.pinned_tag.as_deref(), &state).await?;
     // When a tag is explicitly pinned, allow downgrades.
     let allow_downgrade = s.pinned_tag.is_some();
     install_from_plan(s.channel, plan, allow_downgrade, &app, &state).await
@@ -38,37 +42,36 @@ async fn install_from_plan(
     app: &tauri::AppHandle,
     state: &AppState,
 ) -> ApiResult<InstallState> {
-
     let layout = state.layout_get();
 
     // Anti-rollback: default update path must never auto-downgrade.
     // Explicit pinning is treated as user intent, and may downgrade.
     if !allow_downgrade {
         if let Some(installed) = state.install_state_get() {
-        if installed.channel == channel {
-            let ord = compare_tags(channel, &plan.tag, &installed.tag).ok_or_else(|| {
-                ApiError::new(
-                    "tag_invalid",
-                    format!(
-                        "cannot compare tags for channel {}: {} vs {}",
-                        channel.as_str(),
-                        plan.tag,
-                        installed.tag
-                    ),
-                )
-            })?;
+            if installed.channel == channel {
+                let ord = compare_tags(channel, &plan.tag, &installed.tag).ok_or_else(|| {
+                    ApiError::new(
+                        "tag_invalid",
+                        format!(
+                            "cannot compare tags for channel {}: {} vs {}",
+                            channel.as_str(),
+                            plan.tag,
+                            installed.tag
+                        ),
+                    )
+                })?;
 
-            if ord.is_lt() {
-                return Err(ApiError::new(
-                    "downgrade_refused",
-                    format!(
-                        "refusing downgrade: installed {} -> target {}",
-                        installed.tag, plan.tag
-                    ),
-                ));
+                if ord.is_lt() {
+                    return Err(ApiError::new(
+                        "downgrade_refused",
+                        format!(
+                            "refusing downgrade: installed {} -> target {}",
+                            installed.tag, plan.tag
+                        ),
+                    ));
+                }
             }
         }
-    }
     }
 
     let _ = app.emit(

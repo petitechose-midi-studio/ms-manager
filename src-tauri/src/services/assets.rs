@@ -46,9 +46,12 @@ pub async fn ensure_asset_cached(
         let _ = std::fs::remove_file(&dest);
     }
 
-    let parent = dest
-        .parent()
-        .ok_or_else(|| ApiError::new("io_invalid_path", format!("no parent for {}", dest.display())))?;
+    let parent = dest.parent().ok_or_else(|| {
+        ApiError::new(
+            "io_invalid_path",
+            format!("no parent for {}", dest.display()),
+        )
+    })?;
     std::fs::create_dir_all(parent).map_err(|e| {
         ApiError::new(
             "io_mkdir_failed",
@@ -95,12 +98,9 @@ async fn download_verify_to_file(
         return Err(http_status_error(url, status));
     }
 
-    let mut file = tokio::fs::File::create(dest).await.map_err(|e| {
-        ApiError::new(
-            "io_write_failed",
-            format!("create {}: {e}", dest.display()),
-        )
-    })?;
+    let mut file = tokio::fs::File::create(dest)
+        .await
+        .map_err(|e| ApiError::new("io_write_failed", format!("create {}: {e}", dest.display())))?;
 
     let mut hasher = Sha256::new();
     let mut written: u64 = 0;
@@ -113,10 +113,7 @@ async fn download_verify_to_file(
     {
         hasher.update(&chunk);
         file.write_all(&chunk).await.map_err(|e| {
-            ApiError::new(
-                "io_write_failed",
-                format!("write {}: {e}", dest.display()),
-            )
+            ApiError::new("io_write_failed", format!("write {}: {e}", dest.display()))
         })?;
         written = written.saturating_add(chunk.len() as u64);
     }
@@ -145,16 +142,16 @@ async fn download_verify_to_file(
 }
 
 fn sha256_file_hex(path: &Path) -> ApiResult<String> {
-    let mut f = std::fs::File::open(path).map_err(|e| {
-        ApiError::new("io_read_failed", format!("open {}: {e}", path.display()))
-    })?;
+    let mut f = std::fs::File::open(path)
+        .map_err(|e| ApiError::new("io_read_failed", format!("open {}: {e}", path.display())))?;
 
     let mut hasher = Sha256::new();
     let mut buf = [0u8; 64 * 1024];
 
     loop {
-        let n = std::io::Read::read(&mut f, &mut buf)
-            .map_err(|e| ApiError::new("io_read_failed", format!("read {}: {e}", path.display())))?;
+        let n = std::io::Read::read(&mut f, &mut buf).map_err(|e| {
+            ApiError::new("io_read_failed", format!("read {}: {e}", path.display()))
+        })?;
         if n == 0 {
             break;
         }

@@ -9,8 +9,8 @@ use tauri::Emitter;
 
 use crate::api_error::{ApiError, ApiResult};
 use crate::layout::PayloadLayout;
-use crate::services::bridge_ctl;
 use crate::models::FlashEvent;
+use crate::services::bridge_ctl;
 use crate::services::process;
 
 const FLASH_EVENT: &str = "ms-manager://flash";
@@ -123,13 +123,15 @@ pub async fn flash_firmware(
     let _ = app.emit(FLASH_EVENT, FlashEvent::Done { ok });
 
     if !ok {
-        return Err(ApiError::new("flash_failed", "firmware flash failed").with_details(
-            serde_json::json!({
-                "exit_code": status.code(),
-                "stderr": stderr,
-                "firmware": firmware.display().to_string(),
-            }),
-        ));
+        return Err(
+            ApiError::new("flash_failed", "firmware flash failed").with_details(
+                serde_json::json!({
+                    "exit_code": status.code(),
+                    "stderr": stderr,
+                    "firmware": firmware.display().to_string(),
+                }),
+            ),
+        );
     }
 
     Ok(LastFlashed {
@@ -149,7 +151,11 @@ fn loader_path(layout: &PayloadLayout) -> PathBuf {
     }
 }
 
-fn firmware_path_for_profile(layout: &PayloadLayout, tag: &str, profile: &str) -> ApiResult<PathBuf> {
+fn firmware_path_for_profile(
+    layout: &PayloadLayout,
+    tag: &str,
+    profile: &str,
+) -> ApiResult<PathBuf> {
     let dir = layout.version_dir(tag).join("firmware");
     if !dir.exists() {
         return Err(ApiError::new(
@@ -160,12 +166,8 @@ fn firmware_path_for_profile(layout: &PayloadLayout, tag: &str, profile: &str) -
     }
 
     let mut candidates = Vec::<PathBuf>::new();
-    let read = std::fs::read_dir(&dir).map_err(|e| {
-        ApiError::new(
-            "io_read_failed",
-            format!("read dir {}: {e}", dir.display()),
-        )
-    })?;
+    let read = std::fs::read_dir(&dir)
+        .map_err(|e| ApiError::new("io_read_failed", format!("read dir {}: {e}", dir.display())))?;
     for entry in read {
         let entry = entry.map_err(|e| ApiError::new("io_read_failed", e.to_string()))?;
         let path = entry.path();

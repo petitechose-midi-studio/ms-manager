@@ -2,8 +2,8 @@ use tauri::State;
 
 use crate::api_error::ApiResult;
 use crate::models::Status;
-use crate::services::device;
 use crate::services::bridge_status;
+use crate::services::device;
 use crate::state::AppState;
 
 #[tauri::command]

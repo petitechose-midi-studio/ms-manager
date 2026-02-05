@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { LogicalSize } from "@tauri-apps/api/dpi";
-  import { payloadRootOpen } from "$lib/api/client";
+  import { bridgeLogOpen, payloadRootOpen } from "$lib/api/client";
 
   import type { ActivityEntry, ActivityFilter } from "$lib/state/activity";
   import { createActivityLog } from "$lib/state/activity";
@@ -165,6 +165,16 @@
       activity.add("warn", "ui", `open folder failed: ${msg}`, e);
     }
   }
+
+  async function openBridgeLogs() {
+    try {
+      await bridgeLogOpen();
+    } catch (e) {
+      const err = e as { code?: string; message?: string };
+      const msg = typeof err?.message === "string" ? err.message : String(e);
+      activity.add("warn", "ui", `open bridge logs failed: ${msg}`, e);
+    }
+  }
 </script>
 
 <div class="page">
@@ -322,6 +332,13 @@
             </div>
             <div class="k">Version</div>
             <div class="v">{$dashState.bridge.version ?? "-"}</div>
+            <div class="k">Logs</div>
+            <div class="v rootRow">
+              <span class="path">bridge.log</span>
+              <span class="rootActions">
+                <button class="mini" type="button" onclick={openBridgeLogs}>Open</button>
+              </span>
+            </div>
           </div>
           {#if $dashState.bridge.message && !$dashState.bridge.running}
             <div class="muted">{$dashState.bridge.message}</div>

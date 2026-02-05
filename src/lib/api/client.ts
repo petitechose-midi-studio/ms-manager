@@ -23,6 +23,10 @@ export function bridgeStatusGet(): Promise<BridgeStatus> {
   return invokeApi<BridgeStatus>("bridge_status_get");
 }
 
+export function bridgeLogOpen(): Promise<void> {
+  return invokeApi<void>("bridge_log_open");
+}
+
 export function settingsGet(): Promise<Settings> {
   return invokeApi<Settings>("settings_get");
 }

@@ -133,7 +133,10 @@ pub async fn resolve_manifest_for_tag(
     })
 }
 
-pub async fn list_tags_for_channel(client: &reqwest::Client, channel: Channel) -> ApiResult<Vec<String>> {
+pub async fn list_tags_for_channel(
+    client: &reqwest::Client,
+    channel: Channel,
+) -> ApiResult<Vec<String>> {
     // 1) Try GitHub Releases API.
     let api_url = format!("https://api.github.com/repos/{DIST_REPO_SLUG}/releases?per_page=100");
     if let Ok((status, body)) = fetch_text(client, &api_url).await {
@@ -180,7 +183,10 @@ fn sort_tags(channel: Channel, tags: &mut [String]) {
     });
 }
 
-async fn resolve_latest_tag(client: &reqwest::Client, channel: Channel) -> ApiResult<Option<String>> {
+async fn resolve_latest_tag(
+    client: &reqwest::Client,
+    channel: Channel,
+) -> ApiResult<Option<String>> {
     // 1) Try GitHub Releases API.
     let api_url = format!("https://api.github.com/repos/{DIST_REPO_SLUG}/releases?per_page=100");
     if let Ok((status, body)) = fetch_text(client, &api_url).await {
@@ -250,14 +256,10 @@ async fn fetch_bytes(
     client: &reqwest::Client,
     url: &str,
 ) -> ApiResult<(reqwest::StatusCode, Vec<u8>)> {
-    let res = client
-        .get(url)
-        .send()
-        .await
-        .map_err(|e| {
-            ApiError::new("http_request_failed", format!("GET {url}: {e}"))
-                .with_details(serde_json::json!({"url": url}))
-        })?;
+    let res = client.get(url).send().await.map_err(|e| {
+        ApiError::new("http_request_failed", format!("GET {url}: {e}"))
+            .with_details(serde_json::json!({"url": url}))
+    })?;
     let status = res.status();
     let bytes = res.bytes().await.map_err(|e| {
         ApiError::new("http_read_failed", format!("read {url}: {e}"))

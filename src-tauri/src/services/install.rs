@@ -2,9 +2,9 @@ use std::path::{Path, PathBuf};
 
 use crate::api_error::{ApiError, ApiResult};
 use crate::layout::PayloadLayout;
-use crate::services::process;
 use crate::models::InstallPlan;
 use crate::services::assets::CachedAsset;
+use crate::services::process;
 
 #[derive(Debug, Clone)]
 pub struct InstalledVersion {
@@ -41,7 +41,11 @@ pub async fn apply_install(
     })
 }
 
-async fn install_fresh(layout: &PayloadLayout, plan: &InstallPlan, cached: &[CachedAsset]) -> ApiResult<()> {
+async fn install_fresh(
+    layout: &PayloadLayout,
+    plan: &InstallPlan,
+    cached: &[CachedAsset],
+) -> ApiResult<()> {
     let staging_dir = layout.version_staging_dir(&plan.tag);
     if staging_dir.exists() {
         std::fs::remove_dir_all(&staging_dir).map_err(|e| {
@@ -78,7 +82,11 @@ async fn install_fresh(layout: &PayloadLayout, plan: &InstallPlan, cached: &[Cac
     std::fs::rename(&staging_dir, &version_dir).map_err(|e| {
         ApiError::new(
             "io_rename_failed",
-            format!("rename {} -> {}: {e}", staging_dir.display(), version_dir.display()),
+            format!(
+                "rename {} -> {}: {e}",
+                staging_dir.display(),
+                version_dir.display()
+            ),
         )
     })?;
 
@@ -94,7 +102,10 @@ fn install_additional_assets(version_dir: &Path, cached: &[CachedAsset]) -> ApiR
         let rel = asset_relative_path(&a.plan)?;
         let dest = version_dir.join(rel);
         let parent = dest.parent().ok_or_else(|| {
-            ApiError::new("io_invalid_path", format!("no parent for {}", dest.display()))
+            ApiError::new(
+                "io_invalid_path",
+                format!("no parent for {}", dest.display()),
+            )
         })?;
         std::fs::create_dir_all(parent).map_err(|e| {
             ApiError::new(
@@ -121,7 +132,9 @@ fn asset_relative_path(asset: &crate::models::AssetPlan) -> ApiResult<PathBuf> {
 
     match asset.kind.as_str() {
         "firmware" => Ok(PathBuf::from("firmware").join(&asset.filename)),
-        "bitwig-extension" => Ok(PathBuf::from("integrations").join("bitwig").join(&asset.filename)),
+        "bitwig-extension" => Ok(PathBuf::from("integrations")
+            .join("bitwig")
+            .join(&asset.filename)),
         other => Ok(PathBuf::from("assets").join(other).join(&asset.filename)),
     }
 }
@@ -275,17 +288,16 @@ pub(crate) fn set_current(layout: &PayloadLayout, tag: &str) -> ApiResult<()> {
             .map_err(|e| ApiError::new("io_exec_failed", format!("mklink: {e}")))?;
 
         if !out.status.success() {
-            return Err(ApiError::new(
-                "current_link_failed",
-                "failed to create current junction",
-            )
-            .with_details(serde_json::json!({
-                "exit_code": out.status.code(),
-                "stdout": String::from_utf8_lossy(&out.stdout).trim(),
-                "stderr": String::from_utf8_lossy(&out.stderr).trim(),
-                "current": current.display().to_string(),
-                "target": target.display().to_string(),
-            })));
+            return Err(
+                ApiError::new("current_link_failed", "failed to create current junction")
+                    .with_details(serde_json::json!({
+                        "exit_code": out.status.code(),
+                        "stdout": String::from_utf8_lossy(&out.stdout).trim(),
+                        "stderr": String::from_utf8_lossy(&out.stderr).trim(),
+                        "current": current.display().to_string(),
+                        "target": target.display().to_string(),
+                    })),
+            );
         }
     }
 

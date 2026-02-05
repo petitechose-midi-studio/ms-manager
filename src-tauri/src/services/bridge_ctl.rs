@@ -33,20 +33,17 @@ pub async fn send_command(
 
     tokio::time::timeout(timeout, stream.write_all(&req))
         .await
-        .map_err(|_| "write timeout".to_string())
-        ?
+        .map_err(|_| "write timeout".to_string())?
         .map_err(|e| e.to_string())?;
     tokio::time::timeout(timeout, stream.write_all(b"\n"))
         .await
-        .map_err(|_| "write timeout".to_string())
-        ?
+        .map_err(|_| "write timeout".to_string())?
         .map_err(|e| e.to_string())?;
 
     let mut buf = Vec::new();
     tokio::time::timeout(timeout, stream.read_to_end(&mut buf))
         .await
-        .map_err(|_| "read timeout".to_string())
-        ?
+        .map_err(|_| "read timeout".to_string())?
         .map_err(|e| e.to_string())?;
 
     let text = String::from_utf8_lossy(&buf);

@@ -23,12 +23,8 @@ pub fn payload_root_open(state: State<'_, AppState>) -> ApiResult<()> {
     };
     cmd.arg(root);
 
-    cmd.spawn().map_err(|e| {
-        ApiError::new(
-            "open_failed",
-            format!("open {}: {e}", root.display()),
-        )
-    })?;
+    cmd.spawn()
+        .map_err(|e| ApiError::new("open_failed", format!("open {}: {e}", root.display())))?;
 
     Ok(())
 }
@@ -55,15 +51,14 @@ pub async fn payload_root_relocate(
 
     if let Some(r) = payload::oc_bridge_kill_process().await? {
         if !r.ok {
-            return Err(ApiError::new(
-                "process_kill_failed",
-                "failed to stop oc-bridge process",
-            )
-            .with_details(serde_json::json!({
-                "exit_code": r.exit_code,
-                "stdout": r.stdout,
-                "stderr": r.stderr,
-            })));
+            return Err(
+                ApiError::new("process_kill_failed", "failed to stop oc-bridge process")
+                    .with_details(serde_json::json!({
+                        "exit_code": r.exit_code,
+                        "stdout": r.stdout,
+                        "stderr": r.stderr,
+                    })),
+            );
         }
     }
 

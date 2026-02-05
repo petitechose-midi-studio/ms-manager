@@ -1,9 +1,9 @@
-pub mod distribution;
-pub mod device;
-pub mod install;
-pub mod flash;
 pub mod autostart;
 pub mod bridge;
+pub mod device;
+pub mod distribution;
+pub mod flash;
+pub mod install;
 pub mod payload;
 pub mod settings;
 pub mod status;
