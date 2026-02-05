@@ -81,6 +81,14 @@ pub fn parse_nightly_tag(tag: &str) -> Option<NightlyDate> {
     })
 }
 
+pub fn is_tag_for_channel(channel: Channel, tag: &str) -> bool {
+    match channel {
+        Channel::Stable => parse_stable_tag(tag).is_some(),
+        Channel::Beta => parse_beta_tag(tag).is_some(),
+        Channel::Nightly => parse_nightly_tag(tag).is_some(),
+    }
+}
+
 pub fn compare_tags(channel: Channel, a: &str, b: &str) -> Option<Ordering> {
     match channel {
         Channel::Stable => Some(parse_stable_tag(a)?.cmp(&parse_stable_tag(b)?)),

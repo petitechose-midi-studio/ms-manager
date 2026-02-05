@@ -1,3 +1,11 @@
 pub mod distribution;
 pub mod assets;
 pub mod install;
+pub mod device;
+pub mod flash;
+pub mod bridge;
+pub mod bridge_ctl;
+pub mod bridge_status;
+pub mod manager_autostart;
+pub mod payload;
+pub mod process;

@@ -13,8 +13,9 @@
     "windows": [
       {
         "title": "ms-manager",
-        "width": 800,
-        "height": 600
+        "width": 1024,
+        "minWidth": 640,
+        "height": 768
       }
     ],
     "security": {

@@ -16,6 +16,8 @@ pub struct Settings {
     pub profile: String,
     #[serde(default)]
     pub pinned_tag: Option<String>,
+    #[serde(default)]
+    pub payload_root_override: Option<String>,
 }
 
 impl Default for Settings {
@@ -25,6 +27,7 @@ impl Default for Settings {
             channel: Channel::Stable,
             profile: default_profile(),
             pinned_tag: None,
+            payload_root_override: None,
         }
     }
 }

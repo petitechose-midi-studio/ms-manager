@@ -3,6 +3,7 @@
 //! This crate is intentionally UI-agnostic and does not depend on Tauri.
 
 mod channel;
+mod controller_state;
 mod crypto;
 mod dist;
 mod error;
@@ -12,7 +13,8 @@ mod manifest;
 mod platform;
 mod settings;
 
-pub use channel::{compare_tags, BetaVersion, Channel, NightlyDate, SemVer};
+pub use channel::{compare_tags, is_tag_for_channel, BetaVersion, Channel, NightlyDate, SemVer};
+pub use controller_state::{ControllerState, LastFlashed, CONTROLLER_STATE_SCHEMA};
 pub use crypto::{decode_b64_32, sha256_hex, verify_manifest_sig_b64};
 pub use dist::{
     asset_url_for_tag, manifest_sig_url_for_tag, manifest_url_for_tag, public_key_b64_for_channel,

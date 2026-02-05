@@ -14,6 +14,7 @@ export type Settings = {
   channel: Channel;
   profile: string;
   pinned_tag?: string | null;
+  payload_root_override?: string | null;
 };
 
 export type InstallState = {
@@ -21,6 +22,43 @@ export type InstallState = {
   channel: Channel;
   profile: string;
   tag: string;
+};
+
+export type LastFlashed = {
+  channel: Channel;
+  tag: string;
+  profile: string;
+  flashed_at_ms: number;
+};
+
+export type DeviceStatus = {
+  connected: boolean;
+  count: number;
+  targets: DeviceTarget[];
+};
+
+export type BridgeStatus = {
+  installed: boolean;
+  running: boolean;
+  paused: boolean;
+  serial_open: boolean;
+  version?: string | null;
+  message?: string | null;
+};
+
+export type DeviceTargetKind = "serial" | "halfkay";
+
+export type DeviceTarget = {
+  index: number;
+  target_id: string;
+  kind: DeviceTargetKind;
+  port_name?: string | null;
+  path?: string | null;
+  serial_number?: string | null;
+  manufacturer?: string | null;
+  product?: string | null;
+  vid: number;
+  pid: number;
 };
 
 export type Platform = {
@@ -95,8 +133,12 @@ export type InstallPlan = {
 export type Status = {
   settings: Settings;
   installed: InstallState | null;
+  host_installed: boolean;
   platform: Platform;
   payload_root: string;
+  device: DeviceStatus;
+  last_flashed: LastFlashed | null;
+  bridge: BridgeStatus;
 };
 
 export type InstallEvent =
@@ -122,4 +164,20 @@ export type InstallEvent =
       type: "done";
       tag: string;
       profile: string;
+    };
+
+export type FlashEvent =
+  | {
+      type: "begin";
+      channel: Channel;
+      tag: string;
+      profile: string;
+    }
+  | {
+      type: "output";
+      line: string;
+    }
+  | {
+      type: "done";
+      ok: boolean;
     };

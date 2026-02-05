@@ -19,3 +19,11 @@ pub fn settings_set_channel(channel: Channel, state: State<'_, AppState>) -> Api
 pub fn settings_set_profile(profile: String, state: State<'_, AppState>) -> ApiResult<Settings> {
     state.settings_set_profile(profile)
 }
+
+#[tauri::command]
+pub fn settings_set_pinned_tag(
+    pinned_tag: Option<String>,
+    state: State<'_, AppState>,
+) -> ApiResult<Settings> {
+    state.settings_set_pinned_tag(pinned_tag)
+}

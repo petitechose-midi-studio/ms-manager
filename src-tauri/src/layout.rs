@@ -8,10 +8,16 @@ pub struct PayloadLayout {
 }
 
 impl PayloadLayout {
-    pub fn resolve() -> ApiResult<Self> {
-        Ok(Self {
-            root: payload_root()?,
-        })
+    pub fn resolve(payload_root_override: Option<&str>) -> ApiResult<Self> {
+        let root = match payload_root_override
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+        {
+            Some(v) => parse_payload_root_override(v)?,
+            None => payload_root()?,
+        };
+
+        Ok(Self { root })
     }
 
     pub fn root(&self) -> &Path {
@@ -30,8 +36,17 @@ impl PayloadLayout {
         self.root.join("state")
     }
 
-    pub fn state_file(&self) -> PathBuf {
+    pub fn install_state_file(&self) -> PathBuf {
+        self.state_dir().join("install_state.json")
+    }
+
+    pub fn legacy_install_state_file(&self) -> PathBuf {
+        // Pre-2026-02-04 legacy name.
         self.state_dir().join("state.json")
+    }
+
+    pub fn controller_state_file(&self) -> PathBuf {
+        self.state_dir().join("controller.json")
     }
 
     pub fn cache_dir(&self) -> PathBuf {
@@ -54,6 +69,33 @@ impl PayloadLayout {
     pub fn version_staging_dir(&self, tag: &str) -> PathBuf {
         self.versions_dir().join(format!("{tag}.staging"))
     }
+}
+
+fn parse_payload_root_override(s: &str) -> ApiResult<PathBuf> {
+    // Basic normalization; keep it predictable and platform-native.
+    let p = if cfg!(windows) {
+        PathBuf::from(s)
+    } else if s == "~" {
+        let home =
+            std::env::var_os("HOME").ok_or_else(|| ApiError::new("env_missing", "missing HOME"))?;
+        PathBuf::from(home)
+    } else if let Some(rest) = s.strip_prefix("~/") {
+        let home =
+            std::env::var_os("HOME").ok_or_else(|| ApiError::new("env_missing", "missing HOME"))?;
+        PathBuf::from(home).join(rest)
+    } else {
+        PathBuf::from(s)
+    };
+
+    if !p.is_absolute() {
+        return Err(ApiError::new(
+            "payload_root_invalid",
+            "payload_root_override must be an absolute path",
+        )
+        .with_details(serde_json::json!({"value": s})));
+    }
+
+    Ok(p)
 }
 
 fn payload_root() -> ApiResult<PathBuf> {

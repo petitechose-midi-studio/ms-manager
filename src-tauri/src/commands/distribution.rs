@@ -28,7 +28,28 @@ pub async fn plan_latest_install(
     profile: String,
     state: State<'_, AppState>,
 ) -> ApiResult<InstallPlan> {
-    plan_latest_install_internal(channel, &profile, &state).await
+    plan_install_internal(channel, &profile, None, &state).await
+}
+
+#[tauri::command]
+pub async fn resolve_manifest_for_tag(
+    channel: Channel,
+    tag: String,
+    state: State<'_, AppState>,
+) -> ApiResult<LatestManifestResponse> {
+    let out = distribution::resolve_manifest_for_tag(&state.http, channel, &tag).await?;
+    Ok(LatestManifestResponse {
+        channel,
+        available: out.available,
+        tag: out.tag,
+        manifest: out.manifest,
+        message: out.message,
+    })
+}
+
+#[tauri::command]
+pub async fn list_channel_tags(channel: Channel, state: State<'_, AppState>) -> ApiResult<Vec<String>> {
+    distribution::list_tags_for_channel(&state.http, channel).await
 }
 
 pub(crate) async fn plan_latest_install_internal(
@@ -36,7 +57,19 @@ pub(crate) async fn plan_latest_install_internal(
     profile: &str,
     state: &AppState,
 ) -> ApiResult<InstallPlan> {
-    let out = distribution::resolve_latest_manifest(&state.http, channel).await?;
+    plan_install_internal(channel, profile, None, state).await
+}
+
+pub(crate) async fn plan_install_internal(
+    channel: Channel,
+    profile: &str,
+    tag: Option<&str>,
+    state: &AppState,
+) -> ApiResult<InstallPlan> {
+    let out = match tag {
+        Some(t) => distribution::resolve_manifest_for_tag(&state.http, channel, t).await?,
+        None => distribution::resolve_latest_manifest(&state.http, channel).await?,
+    };
     if !out.available {
         return Err(ApiError::new(
             "no_release_available",

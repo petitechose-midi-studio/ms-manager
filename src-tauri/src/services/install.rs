@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 
 use crate::api_error::{ApiError, ApiResult};
 use crate::layout::PayloadLayout;
+use crate::services::process;
 use crate::models::InstallPlan;
 use crate::services::assets::CachedAsset;
 
@@ -229,7 +230,7 @@ fn ensure_bundle_executables(_version_dir: &Path) -> ApiResult<()> {
     Ok(())
 }
 
-fn set_current(layout: &PayloadLayout, tag: &str) -> ApiResult<()> {
+pub(crate) fn set_current(layout: &PayloadLayout, tag: &str) -> ApiResult<()> {
     let current = layout.current_dir();
     let target = layout.version_dir(tag);
     if !target.exists() {
@@ -239,7 +240,7 @@ fn set_current(layout: &PayloadLayout, tag: &str) -> ApiResult<()> {
         ));
     }
 
-    if current.exists() {
+    if std::fs::symlink_metadata(&current).is_ok() {
         #[cfg(windows)]
         {
             // `current` is expected to be a junction. Use remove_dir (NOT remove_dir_all) to avoid
@@ -264,7 +265,9 @@ fn set_current(layout: &PayloadLayout, tag: &str) -> ApiResult<()> {
     #[cfg(windows)]
     {
         // Prefer a junction for a stable, non-admin `current/` pointer.
-        let out = std::process::Command::new("cmd")
+        let mut cmd = std::process::Command::new("cmd");
+        process::no_console_window_std(&mut cmd);
+        let out = cmd
             .args(["/c", "mklink", "/J"])
             .arg(&current)
             .arg(&target)
