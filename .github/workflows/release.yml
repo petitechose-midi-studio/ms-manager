@@ -12,6 +12,10 @@ on:
         description: "Tag to publish (e.g. v0.1.0)"
         required: true
         type: string
+      source_sha:
+        description: "Source commit SHA (candidate tag is rc-<sha>)"
+        required: true
+        type: string
       request_id:
         description: "Optional dispatch correlation id"
         required: false
@@ -26,69 +30,116 @@ permissions:
   contents: write
 
 jobs:
-  publish:
-    name: publish (${{ matrix.platform }})
-    runs-on: ${{ matrix.platform }}
+  promote:
+    name: promote release
+    runs-on: ubuntu-latest
     environment: app-release
     env:
-      RELEASE_TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - platform: windows-latest
-            args: ""
-          - platform: ubuntu-latest
-            args: ""
-          - platform: macos-15-intel
-            args: "--target x86_64-apple-darwin"
-          - platform: macos-latest
-            args: "--target aarch64-apple-darwin"
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          # For tag pushes, build the tag commit. For manual dispatch, build main HEAD.
-          ref: ${{ github.event_name == 'push' && env.RELEASE_TAG || 'main' }}
-          fetch-depth: 0
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: npm
-
-      - name: Install Linux deps
-        if: matrix.platform == 'ubuntu-latest'
+      - name: Resolve release variables
+        id: vars
         shell: bash
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libappindicator3-dev \
-            librsvg2-dev \
-            libgtk-3-dev \
-            libssl-dev \
-            pkg-config \
-            patchelf
+          if [ "${{ github.event_name }}" = "push" ]; then
+            release_tag="${GITHUB_REF_NAME}"
+            source_sha="${GITHUB_SHA}"
+          else
+            release_tag="${{ inputs.tag }}"
+            source_sha="${{ inputs.source_sha }}"
+          fi
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+          if ! [[ "$source_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Invalid source_sha: $source_sha" >&2
+            exit 1
+          fi
 
-      - name: Install deps
-        run: npm ci --no-audit --no-fund
+          candidate_tag="rc-${source_sha}"
+          prerelease="false"
+          if [[ "$release_tag" == *-* ]]; then
+            prerelease="true"
+          fi
 
-      - name: Build and publish
-        uses: tauri-apps/tauri-action@v0.6.1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        with:
-          tagName: ${{ env.RELEASE_TAG }}
-          releaseName: ms-manager ${{ env.RELEASE_TAG }}
-          generateReleaseNotes: true
-          prerelease: ${{ contains(env.RELEASE_TAG, '-') }}
-          args: ${{ matrix.args }}
+          echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
+          echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
+          echo "candidate_tag=$candidate_tag" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+
+      - name: Wait for candidate release
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="${{ steps.vars.outputs.candidate_tag }}"
+          echo "Waiting for candidate release: ${tag}"
+          for _ in $(seq 1 180); do
+            if gh release view "$tag" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+              echo "Candidate found"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "Timed out waiting for candidate release ${tag}" >&2
+          exit 1
+
+      - name: Download candidate assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          gh release download "${{ steps.vars.outputs.candidate_tag }}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --dir artifacts
+          ls -la artifacts
+
+      - name: Rewrite latest.json URLs for final tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path("artifacts/latest.json")
+          if not path.exists():
+              raise SystemExit("latest.json missing in candidate assets")
+
+          candidate = "${{ steps.vars.outputs.candidate_tag }}"
+          release = "${{ steps.vars.outputs.release_tag }}"
+
+          def rewrite(value):
+              if isinstance(value, str):
+                  return value.replace(f"/download/{candidate}/", f"/download/{release}/")
+              if isinstance(value, list):
+                  return [rewrite(v) for v in value]
+              if isinstance(value, dict):
+                  return {k: rewrite(v) for k, v in value.items()}
+              return value
+
+          obj = json.loads(path.read_text(encoding="utf-8"))
+          obj = rewrite(obj)
+          path.write_text(json.dumps(obj, indent=2) + "\n", encoding="utf-8")
+          PY
+
+      - name: Publish final release from candidate assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          release_tag="${{ steps.vars.outputs.release_tag }}"
+
+          if gh release view "$release_tag" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            gh release upload "$release_tag" artifacts/* --repo "${GITHUB_REPOSITORY}" --clobber
+          else
+            args=(gh release create "$release_tag" artifacts/* --repo "${GITHUB_REPOSITORY}" --title "ms-manager $release_tag" --generate-notes)
+            if [ "${{ steps.vars.outputs.prerelease }}" = "true" ]; then
+              args+=(--prerelease)
+            fi
+            "${args[@]}"
+          fi
+
+      - name: Show release URL
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release view "${{ steps.vars.outputs.release_tag }}" --repo "${GITHUB_REPOSITORY}" --json url --jq '.url'
