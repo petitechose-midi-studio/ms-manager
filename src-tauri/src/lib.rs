@@ -21,6 +21,12 @@ pub fn run() {
             let state = state::AppState::load(&app.handle())?;
             app.manage(state);
 
+            #[cfg(desktop)]
+            app.manage(commands::app_update::PendingAppUpdate(std::sync::Mutex::new(None)));
+
+            #[cfg(not(desktop))]
+            app.manage(commands::app_update::PendingAppUpdate(()));
+
             // End-user default: ms-manager starts at login (per-user).
             // Best-effort: ignore failures so the app remains bootable.
             if !cfg!(debug_assertions) {
@@ -102,7 +108,10 @@ pub fn run() {
         })
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
+            commands::app_update::app_update_check,
+            commands::app_update::app_update_install,
             commands::distribution::resolve_latest_manifest,
             commands::distribution::resolve_manifest_for_tag,
             commands::distribution::list_channel_tags,

@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 
 import type {
   ApiError,
+  AppUpdateStatus,
   Channel,
   DeviceStatus,
   BridgeStatus,
@@ -15,6 +16,8 @@ import type {
   Status,
 } from "$lib/api/types";
 import {
+  appUpdateCheck,
+  appUpdateInstall,
   deviceStatusGet,
   bridgeStatusGet,
   flashFirmware,
@@ -46,6 +49,10 @@ export type ContextMenuState = {
 export type DashboardState = {
   platform: Platform | null;
   payloadRoot: string | null;
+
+  appUpdate: AppUpdateStatus | null;
+  checkingAppUpdate: boolean;
+  installingAppUpdate: boolean;
 
   channel: Channel;
   pinnedTag: string | null;
@@ -97,6 +104,10 @@ export function createDashboard(activity: Activity) {
   const state = writable<DashboardState>({
     platform: null,
     payloadRoot: null,
+
+    appUpdate: null,
+    checkingAppUpdate: false,
+    installingAppUpdate: false,
 
     channel: "stable",
     pinnedTag: null,
@@ -329,6 +340,46 @@ export function createDashboard(activity: Activity) {
     }
   }
 
+  async function checkAppUpdate() {
+    state.update((s) => ({ ...s, checkingAppUpdate: true }));
+    try {
+      activity.add("info", "net", "check app update");
+      const out = await appUpdateCheck();
+      state.update((s) => ({ ...s, appUpdate: out }));
+
+      if (out.error) {
+        activity.add("warn", "net", `app update check failed: ${out.error}`);
+      } else if (out.available && out.update) {
+        activity.add("ok", "net", `app update available: ${out.update.version}`);
+      } else {
+        activity.add("ok", "net", "app is up to date");
+      }
+    } catch (e) {
+      activity.add("warn", "net", "app update check failed", e);
+    } finally {
+      state.update((s) => ({ ...s, checkingAppUpdate: false }));
+    }
+  }
+
+  async function installAppUpdate() {
+    const snap = get(state);
+    if (!snap.appUpdate?.available) return;
+    if (snap.installingAppUpdate) return;
+    if (snap.installing || snap.flashing || snap.relocating || snap.savingSettings) return;
+
+    state.update((s) => ({ ...s, installingAppUpdate: true }));
+    clearError();
+    activity.add("info", "ui", "installing ms-manager update");
+    try {
+      await appUpdateInstall();
+      // On success, the app is expected to restart/exit.
+    } catch (e) {
+      setError(e);
+    } finally {
+      state.update((s) => ({ ...s, installingAppUpdate: false }));
+    }
+  }
+
   async function setChannel(next: Channel) {
     state.update((s) => ({ ...s, channel: next }));
     state.update((s) => ({ ...s, savingSettings: true }));
@@ -513,6 +564,7 @@ export function createDashboard(activity: Activity) {
       await refreshStatus();
       await refreshTags();
       await refreshRelease();
+      void checkAppUpdate();
     } catch (e) {
       setError(e);
     }
@@ -611,6 +663,8 @@ export function createDashboard(activity: Activity) {
   return {
     state,
     start,
+    checkAppUpdate,
+    installAppUpdate,
     refreshRelease,
     setChannel,
     setPinnedTag,

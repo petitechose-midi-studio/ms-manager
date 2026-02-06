@@ -1,3 +1,4 @@
+pub mod app_update;
 pub mod autostart;
 pub mod bridge;
 pub mod device;

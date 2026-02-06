@@ -65,6 +65,11 @@
     ? `${$dashState.installed.channel}:${$dashState.installed.tag}:${$dashState.installed.profile}`
     : "";
 
+  $: appUpdateAvailable = $dashState.appUpdate?.available ?? false;
+  $: appUpdateLabel = $dashState.appUpdate?.update
+    ? `ms-manager ${$dashState.appUpdate.update.version}`
+    : null;
+
   $: versionValue = $dashState.pinnedTag ?? "";
   $: versionOptions = [
     { value: "", label: "latest" },
@@ -183,6 +188,8 @@
     hostLabel={hostLabel}
     device={$dashState.device}
     platform={$dashState.platform}
+    appUpdateAvailable={appUpdateAvailable}
+    appUpdateLabel={appUpdateLabel}
   />
 
   <div class="grid">
@@ -282,6 +289,56 @@
       </div>
 
       <div class="panelBody">
+        <div class="section">
+          <div class="sectionTitle">App</div>
+          <div class="kv">
+            <div class="k">Version</div>
+            <div class="v">{$dashState.appUpdate?.current_version ?? "-"}</div>
+            <div class="k">Update</div>
+            <div class="v">
+              {#if $dashState.checkingAppUpdate}
+                <span class="muted">checking…</span>
+              {:else if $dashState.appUpdate?.error}
+                <span class="muted">updates unavailable</span>
+              {:else if $dashState.appUpdate?.available && $dashState.appUpdate.update}
+                <span class="muted">available: {$dashState.appUpdate.update.version}</span>
+              {:else if $dashState.appUpdate}
+                <span class="muted">up to date</span>
+              {:else}
+                <span class="muted">not checked</span>
+              {/if}
+            </div>
+          </div>
+
+          <div class="actions" style="grid-template-columns: 1fr;">
+            {#if $dashState.appUpdate?.available}
+              <button
+                class="btn primary"
+                type="button"
+                disabled={
+                  $dashState.installingAppUpdate ||
+                  $dashState.installing ||
+                  $dashState.flashing ||
+                  $dashState.relocating ||
+                  $dashState.savingSettings
+                }
+                onclick={() => dash.installAppUpdate()}
+              >
+                {$dashState.installingAppUpdate ? "Updating…" : "Update ms-manager"}
+              </button>
+            {:else}
+              <button
+                class="btn"
+                type="button"
+                disabled={$dashState.checkingAppUpdate}
+                onclick={() => dash.checkAppUpdate()}
+              >
+                {$dashState.checkingAppUpdate ? "Checking…" : "Check app update"}
+              </button>
+            {/if}
+          </div>
+        </div>
+
         <div class="section">
           <div class="sectionTitle">Host</div>
           <div class="kv">

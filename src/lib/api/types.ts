@@ -141,6 +141,19 @@ export type Status = {
   bridge: BridgeStatus;
 };
 
+export type AppUpdateInfo = {
+  version: string;
+  pub_date?: string | null;
+  notes?: string | null;
+};
+
+export type AppUpdateStatus = {
+  current_version: string;
+  available: boolean;
+  update: AppUpdateInfo | null;
+  error?: string | null;
+};
+
 export type InstallEvent =
   | {
       type: "begin";

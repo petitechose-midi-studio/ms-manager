@@ -53,6 +53,21 @@ pub struct Status {
 }
 
 #[derive(Debug, Clone, Serialize)]
+pub struct AppUpdateInfo {
+    pub version: String,
+    pub pub_date: Option<String>,
+    pub notes: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AppUpdateStatus {
+    pub current_version: String,
+    pub available: bool,
+    pub update: Option<AppUpdateInfo>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct DeviceStatus {
     pub connected: bool,
     pub count: u32,
