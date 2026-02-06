@@ -1,5 +1,7 @@
 name: Release
 
+run-name: Release ${{ github.event_name == 'push' && github.ref_name || inputs.tag }} / ${{ github.event_name == 'workflow_dispatch' && inputs.request_id || 'push' }}
+
 on:
   push:
     tags:
@@ -9,6 +11,11 @@ on:
       tag:
         description: "Tag to publish (e.g. v0.1.0)"
         required: true
+        type: string
+      request_id:
+        description: "Optional dispatch correlation id"
+        required: false
+        default: ""
         type: string
 
 concurrency:
@@ -42,8 +49,8 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          # Build the tagged code, even when the workflow is manually dispatched.
-          ref: ${{ env.RELEASE_TAG }}
+          # For tag pushes, build the tag commit. For manual dispatch, build main HEAD.
+          ref: ${{ github.event_name == 'push' && env.RELEASE_TAG || 'main' }}
           fetch-depth: 0
 
       - name: Setup Node
