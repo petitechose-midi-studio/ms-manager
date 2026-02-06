@@ -6,6 +6,9 @@
   export let hostLabel: string;
   export let device: DeviceStatus;
   export let platform: Platform | null;
+
+  export let appUpdateAvailable: boolean;
+  export let appUpdateLabel: string | null;
 </script>
 
 <header class="bar">
@@ -14,6 +17,13 @@
   </div>
 
   <div class="meta">
+    {#if appUpdateAvailable}
+      <div class="badge" data-kind="warn">
+        <span class="dot" aria-hidden="true"></span>
+        <span class="text">{appUpdateLabel ?? "update available"}</span>
+      </div>
+    {/if}
+
     <div class="badge" data-kind={hostInstalled ? "ok" : "muted"}>
       <span class="dot" aria-hidden="true"></span>
       <span class="text">{hostInstalled ? hostLabel : "not installed"}</span>
@@ -76,6 +86,11 @@
     border-color: var(--border-strong);
   }
 
+  .badge[data-kind="warn"] {
+    color: var(--value);
+    border-color: var(--border-strong);
+  }
+
   .dot {
     width: 8px;
     height: 8px;
@@ -85,6 +100,10 @@
 
   .badge[data-kind="ok"] .dot {
     background: var(--ok);
+  }
+
+  .badge[data-kind="warn"] .dot {
+    background: var(--warn);
   }
 
   .badge[data-kind="muted"] .dot {

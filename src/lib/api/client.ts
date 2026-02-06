@@ -1,5 +1,6 @@
 import { invokeApi } from "$lib/api/tauri";
 import type {
+  AppUpdateStatus,
   Channel,
   BridgeStatus,
   DeviceStatus,
@@ -77,4 +78,12 @@ export function payloadRootRelocate(newRoot: string): Promise<Status> {
 
 export function payloadRootOpen(): Promise<void> {
   return invokeApi<void>("payload_root_open");
+}
+
+export function appUpdateCheck(): Promise<AppUpdateStatus> {
+  return invokeApi<AppUpdateStatus>("app_update_check");
+}
+
+export function appUpdateInstall(): Promise<void> {
+  return invokeApi<void>("app_update_install");
 }
