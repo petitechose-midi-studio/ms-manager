@@ -11,6 +11,7 @@ use std::path::PathBuf;
 const RUN_KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
 
 // Keep the identifier stable across releases.
+#[cfg(target_os = "windows")]
 const AUTOSTART_ID: &str = "MidiStudioManager";
 
 pub fn is_installed() -> bool {
@@ -139,6 +140,7 @@ pub fn uninstall() -> std::io::Result<()> {
     }
 }
 
+#[cfg(target_os = "windows")]
 fn quote_exec(path: &std::path::Path) -> String {
     let s = path.to_string_lossy().to_string();
     if s.contains(' ') {

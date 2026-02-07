@@ -84,6 +84,6 @@ export function appUpdateCheck(): Promise<AppUpdateStatus> {
   return invokeApi<AppUpdateStatus>("app_update_check");
 }
 
-export function appUpdateInstall(): Promise<void> {
-  return invokeApi<void>("app_update_install");
+export function appUpdateOpenLatest(): Promise<void> {
+  return invokeApi<void>("app_update_open_latest");
 }

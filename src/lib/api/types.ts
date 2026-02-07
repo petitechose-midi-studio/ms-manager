@@ -145,6 +145,7 @@ export type AppUpdateInfo = {
   version: string;
   pub_date?: string | null;
   notes?: string | null;
+  url: string;
 };
 
 export type AppUpdateStatus = {

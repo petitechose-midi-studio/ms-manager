@@ -24,13 +24,17 @@
   },
   "bundle": {
     "active": true,
-    "createUpdaterArtifacts": true,
     "targets": [
-      "nsis",
+      "msi",
       "dmg",
-      "app",
-      "appimage"
+      "deb",
+      "rpm"
     ],
+    "windows": {
+      "webviewInstallMode": {
+        "type": "downloadBootstrapper"
+      }
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -38,16 +42,5 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
-  },
-  "plugins": {
-    "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEJERDc1MkFBRUQzRTgzRUMKUldUc2d6N3RxbExYdlN0Z3lHak40b0V3ekxxZVovd3oxa0hTQVRBK1BhMDAvZENhSmt2Z1U0OHQK",
-      "endpoints": [
-        "https://github.com/petitechose-midi-studio/ms-manager/releases/latest/download/latest.json"
-      ],
-      "windows": {
-        "installMode": "passive"
-      }
-    }
   }
 }

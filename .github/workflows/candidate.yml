@@ -1,18 +1,22 @@
 name: Candidate
 
+run-name: Candidate ${{ inputs.source_sha }} / ${{ inputs.request_id || 'manual' }}
+
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
     inputs:
-      ref:
-        description: "Git ref to build (default: main)"
+      source_sha:
+        description: "Source commit SHA to package"
+        required: true
+        type: string
+      request_id:
+        description: "Optional dispatch correlation id"
         required: false
-        default: "main"
+        default: ""
         type: string
 
 concurrency:
-  group: candidate-${{ github.event_name == 'push' && github.sha || inputs.ref }}
+  group: candidate-${{ inputs.source_sha }}
   cancel-in-progress: true
 
 permissions:
@@ -27,29 +31,40 @@ jobs:
       matrix:
         include:
           - platform: windows-latest
-            args: ""
+            args: "--bundles msi"
           - platform: ubuntu-latest
-            args: ""
+            args: "--bundles deb,rpm"
           - platform: macos-15-intel
-            args: "--target x86_64-apple-darwin"
+            args: "--target x86_64-apple-darwin --bundles dmg"
           - platform: macos-latest
-            args: "--target aarch64-apple-darwin"
+            args: "--target aarch64-apple-darwin --bundles dmg"
 
     steps:
-      - name: Checkout
+      - name: Checkout source SHA
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event_name == 'push' && github.sha || inputs.ref }}
+          ref: ${{ inputs.source_sha }}
           fetch-depth: 0
+
+      - name: Validate source SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          sha="$(git rev-parse HEAD)"
+          if [ "$sha" != "${{ inputs.source_sha }}" ]; then
+            echo "Checked out SHA does not match input" >&2
+            echo "input=${{ inputs.source_sha }}" >&2
+            echo "head=$sha" >&2
+            exit 1
+          fi
 
       - name: Resolve candidate tag
         id: vars
         shell: bash
         run: |
           set -euo pipefail
-          sha="$(git rev-parse HEAD)"
-          echo "source_sha=${sha}" >> "$GITHUB_OUTPUT"
-          echo "candidate_tag=rc-${sha}" >> "$GITHUB_OUTPUT"
+          echo "source_sha=${{ inputs.source_sha }}" >> "$GITHUB_OUTPUT"
+          echo "candidate_tag=rc-${{ inputs.source_sha }}" >> "$GITHUB_OUTPUT"
 
       - name: Setup Node
         uses: actions/setup-node@v4
@@ -70,7 +85,8 @@ jobs:
             libgtk-3-dev \
             libssl-dev \
             pkg-config \
-            patchelf
+            patchelf \
+            rpm
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -82,8 +98,6 @@ jobs:
         uses: tauri-apps/tauri-action@v0.6.1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           tagName: ${{ steps.vars.outputs.candidate_tag }}
           releaseName: candidate ${{ steps.vars.outputs.candidate_tag }}
@@ -91,3 +105,73 @@ jobs:
           prerelease: true
           generateReleaseNotes: false
           args: ${{ matrix.args }}
+
+  metadata:
+    name: candidate metadata
+    needs: build
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - name: Download candidate assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="rc-${{ inputs.source_sha }}"
+          mkdir -p artifacts
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" --dir artifacts
+          ls -la artifacts
+
+      - name: Generate checksums and metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path("artifacts")
+          files = []
+
+          for p in sorted(root.iterdir()):
+              if not p.is_file():
+                  continue
+              if p.name in {"candidate.json", "checksums.txt"}:
+                  continue
+
+              digest = hashlib.sha256(p.read_bytes()).hexdigest()
+              files.append(
+                  {
+                      "name": p.name,
+                      "size": p.stat().st_size,
+                      "sha256": digest,
+                  }
+              )
+
+          checksums = root / "checksums.txt"
+          checksums.write_text(
+              "".join(f"{item['sha256']}  {item['name']}\\n" for item in files),
+              encoding="utf-8",
+          )
+
+          candidate = {
+              "schema": 1,
+              "repo": os.environ["GITHUB_REPOSITORY"],
+              "workflow": os.environ["GITHUB_WORKFLOW"],
+              "run_id": int(os.environ["GITHUB_RUN_ID"]),
+              "run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"]),
+              "source_sha": "${{ inputs.source_sha }}",
+              "tag": f"rc-${{ inputs.source_sha }}",
+              "files": files,
+          }
+          (root / "candidate.json").write_text(json.dumps(candidate, indent=2) + "\\n", encoding="utf-8")
+          PY
+
+      - name: Upload checksums and candidate metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="rc-${{ inputs.source_sha }}"
+          gh release upload "$tag" artifacts/checksums.txt artifacts/candidate.json --repo "$GITHUB_REPOSITORY" --clobber

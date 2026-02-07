@@ -57,6 +57,7 @@ pub struct AppUpdateInfo {
     pub version: String,
     pub pub_date: Option<String>,
     pub notes: Option<String>,
+    pub url: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
