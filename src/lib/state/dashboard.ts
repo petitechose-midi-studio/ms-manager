@@ -17,7 +17,7 @@ import type {
 } from "$lib/api/types";
 import {
   appUpdateCheck,
-  appUpdateInstall,
+  appUpdateOpenLatest,
   deviceStatusGet,
   bridgeStatusGet,
   flashFirmware,
@@ -369,10 +369,9 @@ export function createDashboard(activity: Activity) {
 
     state.update((s) => ({ ...s, installingAppUpdate: true }));
     clearError();
-    activity.add("info", "ui", "installing ms-manager update");
+    activity.add("info", "ui", "opening ms-manager latest release page");
     try {
-      await appUpdateInstall();
-      // On success, the app is expected to restart/exit.
+      await appUpdateOpenLatest();
     } catch (e) {
       setError(e);
     } finally {

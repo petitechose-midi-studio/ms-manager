@@ -6,8 +6,6 @@
   "permissions": [
     "core:default",
     "core:window:allow-set-theme",
-    "dialog:allow-open",
-    "opener:default",
-    "opener:allow-open-path"
+    "dialog:allow-open"
   ]
 }

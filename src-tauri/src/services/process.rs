@@ -6,12 +6,16 @@ pub fn no_console_window(cmd: &mut tokio::process::Command) {
     {
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
+
+    #[cfg(not(windows))]
+    {
+        let _ = cmd;
+    }
 }
 
+#[cfg(windows)]
 pub fn no_console_window_std(cmd: &mut std::process::Command) {
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        cmd.creation_flags(CREATE_NO_WINDOW);
-    }
+    use std::os::windows::process::CommandExt;
+
+    cmd.creation_flags(CREATE_NO_WINDOW);
 }

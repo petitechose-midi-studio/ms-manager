@@ -1,11 +1,8 @@
 name: Release
 
-run-name: Release ${{ github.event_name == 'push' && github.ref_name || inputs.tag }} / ${{ github.event_name == 'workflow_dispatch' && inputs.request_id || 'push' }}
+run-name: Release ${{ inputs.tag }} / ${{ inputs.request_id || 'manual' }}
 
 on:
-  push:
-    tags:
-      - "v*"
   workflow_dispatch:
     inputs:
       tag:
@@ -23,7 +20,7 @@ on:
         type: string
 
 concurrency:
-  group: release-${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+  group: release-${{ inputs.tag }}
   cancel-in-progress: true
 
 permissions:
@@ -43,13 +40,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if [ "${{ github.event_name }}" = "push" ]; then
-            release_tag="${GITHUB_REF_NAME}"
-            source_sha="${GITHUB_SHA}"
-          else
-            release_tag="${{ inputs.tag }}"
-            source_sha="${{ inputs.source_sha }}"
-          fi
+          release_tag="${{ inputs.tag }}"
+          source_sha="${{ inputs.source_sha }}"
 
           if ! [[ "$source_sha" =~ ^[0-9a-f]{40}$ ]]; then
             echo "Invalid source_sha: $source_sha" >&2
@@ -93,33 +85,36 @@ jobs:
             --dir artifacts
           ls -la artifacts
 
-      - name: Rewrite latest.json URLs for final tag
+      - name: Validate package policy
         shell: bash
         run: |
           set -euo pipefail
           python - <<'PY'
-          import json
           from pathlib import Path
 
-          path = Path("artifacts/latest.json")
-          if not path.exists():
-              raise SystemExit("latest.json missing in candidate assets")
+          names = [p.name for p in Path("artifacts").iterdir() if p.is_file()]
 
-          candidate = "${{ steps.vars.outputs.candidate_tag }}"
-          release = "${{ steps.vars.outputs.release_tag }}"
+          has_msi = any(n.endswith(".msi") for n in names)
+          has_dmg = any(n.endswith(".dmg") for n in names)
+          has_deb = any(n.endswith(".deb") for n in names)
+          has_rpm = any(n.endswith(".rpm") for n in names)
 
-          def rewrite(value):
-              if isinstance(value, str):
-                  return value.replace(f"/download/{candidate}/", f"/download/{release}/")
-              if isinstance(value, list):
-                  return [rewrite(v) for v in value]
-              if isinstance(value, dict):
-                  return {k: rewrite(v) for k, v in value.items()}
-              return value
+          forbidden = [n for n in names if n.endswith(".AppImage") or n.endswith("-setup.exe")]
 
-          obj = json.loads(path.read_text(encoding="utf-8"))
-          obj = rewrite(obj)
-          path.write_text(json.dumps(obj, indent=2) + "\n", encoding="utf-8")
+          missing = []
+          if not has_msi:
+              missing.append(".msi")
+          if not has_dmg:
+              missing.append(".dmg")
+          if not has_deb:
+              missing.append(".deb")
+          if not has_rpm:
+              missing.append(".rpm")
+
+          if missing:
+              raise SystemExit(f"missing expected package types: {', '.join(missing)}")
+          if forbidden:
+              raise SystemExit(f"forbidden artifacts present: {forbidden}")
           PY
 
       - name: Publish final release from candidate assets

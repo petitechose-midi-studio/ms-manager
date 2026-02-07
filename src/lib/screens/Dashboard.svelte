@@ -324,7 +324,7 @@
                 }
                 onclick={() => dash.installAppUpdate()}
               >
-                {$dashState.installingAppUpdate ? "Updating…" : "Update ms-manager"}
+                {$dashState.installingAppUpdate ? "Opening…" : "Open latest release"}
               </button>
             {:else}
               <button

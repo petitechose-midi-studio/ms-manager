@@ -4,6 +4,8 @@ use crate::api_error::{ApiError, ApiResult};
 use crate::layout::PayloadLayout;
 use crate::models::InstallPlan;
 use crate::services::assets::CachedAsset;
+
+#[cfg(windows)]
 use crate::services::process;
 
 #[derive(Debug, Clone)]
