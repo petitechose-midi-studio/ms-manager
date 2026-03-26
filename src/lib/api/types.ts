@@ -1,5 +1,6 @@
 export type Channel = "stable" | "beta" | "nightly";
 export type ArtifactSource = "installed" | "workspace";
+export type FirmwareTarget = "standalone" | "bitwig";
 
 export type Os = "windows" | "macos" | "linux";
 export type Arch = "x86_64" | "arm64";
@@ -8,15 +9,6 @@ export type ApiError = {
   code: string;
   message: string;
   details?: unknown;
-};
-
-export type Settings = {
-  schema: number;
-  channel: Channel;
-  profile: string;
-  pinned_tag?: string | null;
-  artifact_source: ArtifactSource;
-  payload_root_override?: string | null;
 };
 
 export type InstallState = {
@@ -51,7 +43,14 @@ export type BridgeStatus = {
 
 export type BridgeInstanceStatus = {
   instance_id: string;
+  display_name?: string | null;
   configured_serial: string;
+  target: FirmwareTarget;
+  artifact_source: ArtifactSource;
+  installed_channel?: Channel | null;
+  installed_pinned_tag?: string | null;
+  artifacts_ready: boolean;
+  artifact_message?: string | null;
   enabled: boolean;
   running: boolean;
   paused: boolean;
@@ -60,6 +59,8 @@ export type BridgeInstanceStatus = {
   resolved_serial_port?: string | null;
   connected_serial?: string | null;
   message?: string | null;
+  last_flashed?: LastFlashed | null;
+  artifact_location_path?: string | null;
   host_udp_port: number;
   control_port: number;
   log_broadcast_port: number;
@@ -70,11 +71,16 @@ export type BridgeMode = "hardware" | "native_sim" | "wasm_sim";
 
 export type BridgeInstanceBinding = {
   instance_id: string;
+  display_name?: string | null;
   app: BridgeApp;
   mode: BridgeMode;
   controller_serial: string;
   controller_vid: number;
   controller_pid: number;
+  target: FirmwareTarget;
+  artifact_source: ArtifactSource;
+  installed_channel?: Channel | null;
+  installed_pinned_tag?: string | null;
   host_udp_port: number;
   control_port: number;
   log_broadcast_port: number;
@@ -100,6 +106,27 @@ export type BridgeInstanceBindRequest = {
 
 export type BridgeInstanceBindingResponse = {
   binding: BridgeInstanceBinding;
+};
+
+export type BridgeInstanceTargetSetRequest = {
+  instance_id: string;
+  target: FirmwareTarget;
+};
+
+export type BridgeInstanceArtifactSourceSetRequest = {
+  instance_id: string;
+  artifact_source: ArtifactSource;
+};
+
+export type BridgeInstanceInstalledReleaseSetRequest = {
+  instance_id: string;
+  channel: Channel;
+  pinned_tag?: string | null;
+};
+
+export type BridgeInstanceNameSetRequest = {
+  instance_id: string;
+  display_name?: string | null;
 };
 
 export type DeviceTargetKind = "serial" | "halfkay";
@@ -161,33 +188,7 @@ export type Manifest = {
   pages?: ManifestPages | null;
 };
 
-export type LatestManifestResponse = {
-  channel: Channel;
-  available: boolean;
-  tag: string | null;
-  manifest: Manifest | null;
-  message: string | null;
-};
-
-export type AssetPlan = {
-  id: string;
-  kind: string;
-  filename: string;
-  sha256: string;
-  size: number;
-  url: string;
-};
-
-export type InstallPlan = {
-  channel: Channel;
-  tag: string;
-  profile: string;
-  platform: Platform;
-  assets: AssetPlan[];
-};
-
 export type Status = {
-  settings: Settings;
   installed: InstallState | null;
   host_installed: boolean;
   artifact_source: ArtifactSource;
@@ -196,7 +197,6 @@ export type Status = {
   platform: Platform;
   payload_root: string;
   device: DeviceStatus;
-  last_flashed: LastFlashed | null;
   bridge: BridgeStatus;
 };
 
@@ -254,3 +254,12 @@ export type FlashEvent =
       type: "done";
       ok: boolean;
     };
+
+export type BridgeLogEvent = {
+  instance_id?: string | null;
+  port: number;
+  timestamp: string;
+  kind: "system" | "debug" | "protocol_in" | "protocol_out";
+  level?: "debug" | "info" | "warn" | "error" | null;
+  message: string;
+};

@@ -1,4 +1,7 @@
-use ms_manager_core::{BridgeApp, BridgeInstanceBinding, BridgeInstancesState, BridgeMode};
+use ms_manager_core::{
+    ArtifactSource, BridgeApp, BridgeInstanceBinding, BridgeInstancesState, BridgeMode, Channel,
+    FirmwareTarget,
+};
 
 pub const HOST_UDP_PORT_START: u16 = 9000;
 pub const CONTROL_PORT_START: u16 = 7999;
@@ -39,6 +42,10 @@ pub fn build_binding(
     controller_serial: &str,
     controller_vid: u32,
     controller_pid: u32,
+    target: FirmwareTarget,
+    artifact_source: ArtifactSource,
+    installed_channel: Option<Channel>,
+    installed_pinned_tag: Option<String>,
 ) -> Result<BridgeInstanceBinding, String> {
     let controller_serial = controller_serial.trim();
     if controller_serial.is_empty() {
@@ -57,11 +64,16 @@ pub fn build_binding(
     let (host_udp_port, control_port, log_broadcast_port) = allocate_ports(state)?;
     Ok(BridgeInstanceBinding {
         instance_id,
+        display_name: None,
         app,
         mode,
         controller_serial: controller_serial.to_string(),
         controller_vid,
         controller_pid,
+        target,
+        artifact_source,
+        installed_channel,
+        installed_pinned_tag,
         host_udp_port,
         control_port,
         log_broadcast_port,
@@ -96,6 +108,10 @@ mod tests {
             "17081760",
             0x16C0,
             0x0489,
+            FirmwareTarget::Bitwig,
+            ArtifactSource::Installed,
+            Some(Channel::Stable),
+            None,
         )
         .unwrap();
 
@@ -111,11 +127,16 @@ mod tests {
             schema: 1,
             instances: vec![BridgeInstanceBinding {
                 instance_id: "bitwig-hardware-17081760".to_string(),
+                display_name: None,
                 app: BridgeApp::Bitwig,
                 mode: BridgeMode::Hardware,
                 controller_serial: "17081760".to_string(),
                 controller_vid: 0x16C0,
                 controller_pid: 0x0489,
+                target: FirmwareTarget::Bitwig,
+                artifact_source: ArtifactSource::Installed,
+                installed_channel: Some(Channel::Stable),
+                installed_pinned_tag: None,
                 host_udp_port: 9000,
                 control_port: 7999,
                 log_broadcast_port: 9999,

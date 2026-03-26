@@ -3,49 +3,9 @@ use tauri::State;
 use ms_manager_core::{asset_url_for_tag, select_install_set_assets, Channel, Platform};
 
 use crate::api_error::{ApiError, ApiResult};
-use crate::models::{AssetPlan, InstallPlan, LatestManifestResponse};
+use crate::models::{AssetPlan, InstallPlan};
 use crate::services::distribution;
 use crate::state::AppState;
-
-#[tauri::command]
-pub async fn resolve_latest_manifest(
-    channel: Channel,
-    state: State<'_, AppState>,
-) -> ApiResult<LatestManifestResponse> {
-    let out = distribution::resolve_latest_manifest(&state.http, channel).await?;
-    Ok(LatestManifestResponse {
-        channel,
-        available: out.available,
-        tag: out.tag,
-        manifest: out.manifest,
-        message: out.message,
-    })
-}
-
-#[tauri::command]
-pub async fn plan_latest_install(
-    channel: Channel,
-    profile: String,
-    state: State<'_, AppState>,
-) -> ApiResult<InstallPlan> {
-    plan_install_internal(channel, &profile, None, &state).await
-}
-
-#[tauri::command]
-pub async fn resolve_manifest_for_tag(
-    channel: Channel,
-    tag: String,
-    state: State<'_, AppState>,
-) -> ApiResult<LatestManifestResponse> {
-    let out = distribution::resolve_manifest_for_tag(&state.http, channel, &tag).await?;
-    Ok(LatestManifestResponse {
-        channel,
-        available: out.available,
-        tag: out.tag,
-        manifest: out.manifest,
-        message: out.message,
-    })
-}
 
 #[tauri::command]
 pub async fn list_channel_tags(
@@ -53,14 +13,6 @@ pub async fn list_channel_tags(
     state: State<'_, AppState>,
 ) -> ApiResult<Vec<String>> {
     distribution::list_tags_for_channel(&state.http, channel).await
-}
-
-pub(crate) async fn plan_latest_install_internal(
-    channel: Channel,
-    profile: &str,
-    state: &AppState,
-) -> ApiResult<InstallPlan> {
-    plan_install_internal(channel, profile, None, state).await
 }
 
 pub(crate) async fn plan_install_internal(

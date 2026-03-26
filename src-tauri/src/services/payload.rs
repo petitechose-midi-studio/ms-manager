@@ -297,12 +297,34 @@ fn remove_current_pointer(layout: &PayloadLayout) -> ApiResult<()> {
 
     #[cfg(windows)]
     {
-        std::fs::remove_dir(&current).map_err(|e| {
-            ApiError::new(
-                "io_remove_failed",
-                format!("remove {}: {e}", current.display()),
-            )
-        })?;
+        let mut cmd = std::process::Command::new("cmd");
+        process::no_console_window_std(&mut cmd);
+        let out = cmd
+            .args(["/c", "rmdir"])
+            .arg(&current)
+            .output()
+            .map_err(|e| {
+                ApiError::new("io_exec_failed", format!("rmdir {}: {e}", current.display()))
+            })?;
+
+        if !out.status.success() && current.exists() {
+            return Err(
+                ApiError::new(
+                    "io_remove_failed",
+                    format!(
+                        "remove {}: {}",
+                        current.display(),
+                        String::from_utf8_lossy(&out.stderr).trim()
+                    ),
+                )
+                .with_details(serde_json::json!({
+                    "path": current.display().to_string(),
+                    "exit_code": out.status.code(),
+                    "stdout": String::from_utf8_lossy(&out.stdout),
+                    "stderr": String::from_utf8_lossy(&out.stderr),
+                })),
+            );
+        }
         return Ok(());
     }
 

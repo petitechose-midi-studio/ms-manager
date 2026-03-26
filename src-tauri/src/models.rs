@@ -1,14 +1,21 @@
 use serde::{Deserialize, Serialize};
 
 use ms_manager_core::{
-    ArtifactSource, BridgeInstanceBinding, BridgeInstancesState, Channel, InstallState,
-    LastFlashed, Manifest, Platform, Settings,
+    ArtifactSource, BridgeInstanceBinding, BridgeInstancesState, Channel, FirmwareTarget,
+    InstallState, LastFlashed, Platform,
 };
 
 #[derive(Debug, Clone, Serialize)]
 pub struct BridgeInstanceStatus {
     pub instance_id: String,
+    pub display_name: Option<String>,
     pub configured_serial: String,
+    pub target: FirmwareTarget,
+    pub artifact_source: ArtifactSource,
+    pub installed_channel: Option<Channel>,
+    pub installed_pinned_tag: Option<String>,
+    pub artifacts_ready: bool,
+    pub artifact_message: Option<String>,
     pub enabled: bool,
     pub running: bool,
     pub paused: bool,
@@ -17,6 +24,8 @@ pub struct BridgeInstanceStatus {
     pub resolved_serial_port: Option<String>,
     pub connected_serial: Option<String>,
     pub message: Option<String>,
+    pub last_flashed: Option<LastFlashed>,
+    pub artifact_location_path: Option<String>,
     pub host_udp_port: u16,
     pub control_port: u16,
     pub log_broadcast_port: u16,
@@ -31,15 +40,6 @@ pub struct BridgeStatus {
     pub version: Option<String>,
     pub message: Option<String>,
     pub instances: Vec<BridgeInstanceStatus>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-pub struct LatestManifestResponse {
-    pub channel: Channel,
-    pub available: bool,
-    pub tag: Option<String>,
-    pub manifest: Option<Manifest>,
-    pub message: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -63,7 +63,6 @@ pub struct InstallPlan {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Status {
-    pub settings: Settings,
     pub installed: Option<InstallState>,
     pub host_installed: bool,
     pub artifact_source: ArtifactSource,
@@ -72,7 +71,6 @@ pub struct Status {
     pub platform: Platform,
     pub payload_root: String,
     pub device: DeviceStatus,
-    pub last_flashed: Option<LastFlashed>,
     pub bridge: BridgeStatus,
 }
 
@@ -88,6 +86,31 @@ pub struct BridgeInstanceBindRequest {
     pub controller_serial: String,
     pub controller_vid: u32,
     pub controller_pid: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BridgeInstanceTargetSetRequest {
+    pub instance_id: String,
+    pub target: ms_manager_core::FirmwareTarget,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BridgeInstanceArtifactSourceSetRequest {
+    pub instance_id: String,
+    pub artifact_source: ms_manager_core::ArtifactSource,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BridgeInstanceInstalledReleaseSetRequest {
+    pub instance_id: String,
+    pub channel: Channel,
+    pub pinned_tag: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BridgeInstanceNameSetRequest {
+    pub instance_id: String,
+    pub display_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]

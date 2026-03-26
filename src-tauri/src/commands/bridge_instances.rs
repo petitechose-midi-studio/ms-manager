@@ -2,7 +2,9 @@ use tauri::State;
 
 use crate::api_error::{ApiError, ApiResult};
 use crate::models::{
-    BridgeInstanceBindRequest, BridgeInstanceBindingResponse, BridgeInstancesResponse,
+    BridgeInstanceArtifactSourceSetRequest, BridgeInstanceBindRequest,
+    BridgeInstanceBindingResponse, BridgeInstanceInstalledReleaseSetRequest,
+    BridgeInstanceNameSetRequest, BridgeInstanceTargetSetRequest, BridgeInstancesResponse,
 };
 use crate::services::bridge_instances;
 use crate::state::AppState;
@@ -27,6 +29,10 @@ pub fn bridge_instance_bind(
         &request.controller_serial,
         request.controller_vid,
         request.controller_pid,
+        ms_manager_core::FirmwareTarget::Bitwig,
+        ms_manager_core::ArtifactSource::Installed,
+        Some(ms_manager_core::Channel::Stable),
+        None,
     )
     .map_err(|reason| ApiError::new("bridge_instance_bind_failed", reason))?;
 
@@ -57,19 +63,47 @@ pub fn bridge_instance_enable_set(
     instance_id: String,
     enabled: bool,
 ) -> ApiResult<BridgeInstancesResponse> {
-    let mut bindings = state.bridge_instances_get();
-    let Some(binding) = bindings
-        .instances
-        .iter_mut()
-        .find(|binding| binding.instance_id == instance_id)
-    else {
-        return Err(ApiError::new(
-            "bridge_instance_not_found",
-            format!("unknown instance_id: {instance_id}"),
-        ));
-    };
+    let state = state.bridge_instance_set_enabled(&instance_id, enabled)?;
+    Ok(BridgeInstancesResponse { state })
+}
 
-    binding.enabled = enabled;
-    let state = state.bridge_instances_set(bindings)?;
+#[tauri::command]
+pub fn bridge_instance_target_set(
+    state: State<'_, AppState>,
+    request: BridgeInstanceTargetSetRequest,
+) -> ApiResult<BridgeInstancesResponse> {
+    let state = state.bridge_instance_set_target(&request.instance_id, request.target)?;
+    Ok(BridgeInstancesResponse { state })
+}
+
+#[tauri::command]
+pub fn bridge_instance_artifact_source_set(
+    state: State<'_, AppState>,
+    request: BridgeInstanceArtifactSourceSetRequest,
+) -> ApiResult<BridgeInstancesResponse> {
+    let state =
+        state.bridge_instance_set_artifact_source(&request.instance_id, request.artifact_source)?;
+    Ok(BridgeInstancesResponse { state })
+}
+
+#[tauri::command]
+pub fn bridge_instance_installed_release_set(
+    state: State<'_, AppState>,
+    request: BridgeInstanceInstalledReleaseSetRequest,
+) -> ApiResult<BridgeInstancesResponse> {
+    let state = state.bridge_instance_set_installed_release(
+        &request.instance_id,
+        request.channel,
+        request.pinned_tag,
+    )?;
+    Ok(BridgeInstancesResponse { state })
+}
+
+#[tauri::command]
+pub fn bridge_instance_name_set(
+    state: State<'_, AppState>,
+    request: BridgeInstanceNameSetRequest,
+) -> ApiResult<BridgeInstancesResponse> {
+    let state = state.bridge_instance_set_display_name(&request.instance_id, request.display_name)?;
     Ok(BridgeInstancesResponse { state })
 }

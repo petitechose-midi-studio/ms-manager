@@ -14,33 +14,32 @@ pub async fn status_get(state: State<'_, AppState>) -> ApiResult<Status> {
 
 pub(crate) async fn status_get_internal(state: &AppState) -> ApiResult<Status> {
     let layout = state.layout_get();
-    let settings = state.settings_get();
     let installed = state.install_state_get();
-    let artifact_health = artifact_resolver::artifact_health(&settings, &layout, installed.as_ref());
+    let artifact_health = artifact_resolver::management_artifact_health(&layout, installed.as_ref());
     let host_installed = artifact_health.ready;
 
-    let bridge = if !host_installed {
-        crate::models::BridgeStatus {
-            installed: false,
-            running: false,
-            paused: false,
-            serial_open: false,
-            version: None,
-            message: Some(
-                artifact_health
-                    .message
-                    .clone()
-                    .unwrap_or_else(|| "host artifacts are not available".to_string()),
-            ),
-            instances: Vec::new(),
-        }
-    } else {
-        bridge_status::bridge_status(&settings, &layout, &state.bridge_instances_get()).await
-    };
-    let device = device::device_status(&settings, &layout).await;
-
+    let bindings = state.bridge_instances_get();
+    let controller_state = state.controller_state_get();
+    let bridge_layout = layout.clone();
+    let bridge_installed = installed.clone();
+    let bridge_task = tauri::async_runtime::spawn(async move {
+        bridge_status::bridge_status(
+            &bridge_layout,
+            bridge_installed.as_ref(),
+            &bindings,
+            &controller_state,
+        )
+        .await
+    });
+    let device_layout = layout.clone();
+    let device_task = tauri::async_runtime::spawn(async move { device::device_status(&device_layout).await });
+    let bridge = bridge_task
+        .await
+        .map_err(|e| crate::api_error::ApiError::new("task_join_failed", e.to_string()))?;
+    let device = device_task
+        .await
+        .map_err(|e| crate::api_error::ApiError::new("task_join_failed", e.to_string()))?;
     Ok(Status {
-        settings,
         installed,
         host_installed,
         artifact_source: artifact_health.source,
@@ -51,7 +50,6 @@ pub(crate) async fn status_get_internal(state: &AppState) -> ApiResult<Status> {
         platform: ms_manager_core::Platform::current()?,
         payload_root: layout.root().display().to_string(),
         device,
-        last_flashed: state.controller_last_flashed(),
         bridge,
     })
 }

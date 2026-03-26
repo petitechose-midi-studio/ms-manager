@@ -6,13 +6,23 @@ use crate::layout::PayloadLayout;
 use crate::models::Status;
 use crate::services::payload;
 use crate::state::AppState;
-#[tauri::command]
-pub fn payload_root_open(state: State<'_, AppState>) -> ApiResult<()> {
-    let layout = state.layout_get();
-    let root = layout.root();
 
-    // Best-effort: ensure the folder exists so the explorer doesn't error.
-    let _ = std::fs::create_dir_all(root);
+#[tauri::command]
+pub fn path_open(path: String) -> ApiResult<()> {
+    let path = std::path::PathBuf::from(normalize_path_string(path.trim()));
+    if path.as_os_str().is_empty() {
+        return Err(ApiError::new("path_invalid", "path cannot be empty"));
+    }
+
+    open_path_inner(&path)
+}
+
+pub(crate) fn open_path_inner(target: &std::path::Path) -> ApiResult<()> {
+    let open_target = if target.is_file() {
+        target.parent().unwrap_or(target)
+    } else {
+        target
+    };
 
     let mut cmd = if cfg!(windows) {
         std::process::Command::new("explorer")
@@ -21,12 +31,26 @@ pub fn payload_root_open(state: State<'_, AppState>) -> ApiResult<()> {
     } else {
         std::process::Command::new("xdg-open")
     };
-    cmd.arg(root);
+    cmd.arg(open_target);
 
     cmd.spawn()
-        .map_err(|e| ApiError::new("open_failed", format!("open {}: {e}", root.display())))?;
+        .map_err(|e| ApiError::new("open_failed", format!("open {}: {e}", open_target.display())))?;
 
     Ok(())
+}
+
+fn normalize_path_string(path: &str) -> String {
+    #[cfg(windows)]
+    {
+        if let Some(rest) = path.strip_prefix("\\\\?\\UNC\\") {
+            return format!("\\\\{rest}");
+        }
+        if let Some(rest) = path.strip_prefix("\\\\?\\") {
+            return rest.to_string();
+        }
+    }
+
+    path.to_string()
 }
 
 #[tauri::command]

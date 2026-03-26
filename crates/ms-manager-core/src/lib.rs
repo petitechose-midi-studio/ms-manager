@@ -16,7 +16,8 @@ mod settings;
 
 pub use channel::{compare_tags, is_tag_for_channel, BetaVersion, Channel, NightlyDate, SemVer};
 pub use bridge_instances::{
-    BridgeApp, BridgeInstanceBinding, BridgeInstancesState, BridgeMode, BRIDGE_INSTANCES_SCHEMA,
+    BridgeApp, BridgeInstanceBinding, BridgeInstancesState, BridgeMode, FirmwareTarget,
+    BRIDGE_INSTANCES_SCHEMA,
 };
 pub use controller_state::{ControllerState, LastFlashed, CONTROLLER_STATE_SCHEMA};
 pub use crypto::{decode_b64_32, sha256_hex, verify_manifest_sig_b64};

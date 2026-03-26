@@ -140,7 +140,6 @@
     text-transform: uppercase;
     letter-spacing: 0.08em;
     font-size: 11px;
-    font-family: var(--font-mono);
   }
 
   .k::after {
@@ -150,7 +149,6 @@
 
   .v {
     overflow-wrap: anywhere;
-    font-family: var(--font-mono);
     color: var(--fg);
     opacity: 0.86;
     font-weight: 600;
@@ -159,7 +157,6 @@
   .input {
     width: 100%;
     font: inherit;
-    font-family: var(--font-mono);
     font-weight: 600;
     color: var(--fg);
     background: var(--bg);

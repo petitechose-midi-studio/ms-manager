@@ -1,10 +1,11 @@
 import { writable } from "svelte/store";
 
 export type ActivityLevel = "info" | "ok" | "warn" | "error";
-export type ActivityScope = "ui" | "net" | "install" | "flash" | "device" | "fs";
-export type ActivityFilter = "all" | ActivityScope;
+export type ActivityScope = "ui" | "net" | "install" | "flash" | "device" | "fs" | "bridge";
+export type ActivityFilter = "all" | "manager" | "flash" | "bridge";
 
 export type ActivityEntry = {
+  id: number;
   ts: number;
   level: ActivityLevel;
   scope: ActivityScope;
@@ -12,22 +13,61 @@ export type ActivityEntry = {
   details?: unknown;
 };
 
+export function matchesActivityFilter(entry: ActivityEntry, filter: ActivityFilter): boolean {
+  if (filter === "all") return true;
+  if (filter === "flash") return entry.scope === "flash";
+  if (filter === "bridge") return entry.scope === "bridge";
+  return entry.scope !== "flash" && entry.scope !== "bridge";
+}
+
 export function createActivityLog(limit = 500) {
   const entries = writable<ActivityEntry[]>([]);
+  let nextId = 1;
+
+  function trim(list: ActivityEntry[]) {
+    if (list.length > limit) {
+      return list.slice(list.length - limit);
+    }
+    return list;
+  }
 
   function add(level: ActivityLevel, scope: ActivityScope, message: string, details?: unknown) {
-    const next: ActivityEntry = { ts: Date.now(), level, scope, message, details };
+    const next: ActivityEntry = { id: nextId++, ts: Date.now(), level, scope, message, details };
     entries.update((cur) => {
-      const out = [...cur, next];
-      if (out.length > limit) {
-        return out.slice(out.length - limit);
-      }
-      return out;
+      return trim([...cur, next]);
     });
+  }
+
+  function addMany(
+    nextEntries: {
+      level: ActivityLevel;
+      scope: ActivityScope;
+      message: string;
+      details?: unknown;
+    }[],
+  ) {
+    if (!nextEntries.length) return;
+    entries.update((cur) =>
+      trim([
+        ...cur,
+        ...nextEntries.map((entry) => ({
+          id: nextId++,
+          ts: Date.now(),
+          level: entry.level,
+          scope: entry.scope,
+          message: entry.message,
+          details: entry.details,
+        })),
+      ]),
+    );
   }
 
   function clear() {
     entries.set([]);
+  }
+
+  function retain(predicate: (entry: ActivityEntry) => boolean) {
+    entries.update((cur) => cur.filter(predicate));
   }
 
   function toText(list: ActivityEntry[]): string {
@@ -46,5 +86,5 @@ export function createActivityLog(limit = 500) {
       .join("\n");
   }
 
-  return { entries, add, clear, toText };
+  return { entries, add, addMany, clear, retain, toText };
 }

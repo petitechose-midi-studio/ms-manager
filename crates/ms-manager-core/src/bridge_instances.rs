@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
+use crate::{ArtifactSource, Channel};
+
 pub const BRIDGE_INSTANCES_SCHEMA: u32 = 1;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -17,17 +19,68 @@ pub enum BridgeMode {
     WasmSim,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FirmwareTarget {
+    Standalone,
+    Bitwig,
+}
+
+impl FirmwareTarget {
+    pub fn profile_id(self) -> &'static str {
+        match self {
+            Self::Standalone => "default",
+            Self::Bitwig => "bitwig",
+        }
+    }
+
+    pub fn from_profile_id(value: &str) -> Option<Self> {
+        match value.trim() {
+            "default" => Some(Self::Standalone),
+            "bitwig" => Some(Self::Bitwig),
+            _ => None,
+        }
+    }
+}
+
+fn default_enabled() -> bool {
+    true
+}
+
+fn default_target() -> FirmwareTarget {
+    FirmwareTarget::Bitwig
+}
+
+fn default_artifact_source() -> ArtifactSource {
+    ArtifactSource::Installed
+}
+
+fn default_installed_channel() -> Option<Channel> {
+    Some(Channel::Stable)
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct BridgeInstanceBinding {
     pub instance_id: String,
+    #[serde(default)]
+    pub display_name: Option<String>,
     pub app: BridgeApp,
     pub mode: BridgeMode,
     pub controller_serial: String,
     pub controller_vid: u32,
     pub controller_pid: u32,
+    #[serde(default = "default_target")]
+    pub target: FirmwareTarget,
+    #[serde(default = "default_artifact_source")]
+    pub artifact_source: ArtifactSource,
+    #[serde(default = "default_installed_channel")]
+    pub installed_channel: Option<Channel>,
+    #[serde(default)]
+    pub installed_pinned_tag: Option<String>,
     pub host_udp_port: u16,
     pub control_port: u16,
     pub log_broadcast_port: u16,
+    #[serde(default = "default_enabled")]
     pub enabled: bool,
 }
 
@@ -64,6 +117,14 @@ impl BridgeInstancesState {
                     instance.instance_id
                 ));
             }
+            if let Some(display_name) = &instance.display_name {
+                if display_name.trim().is_empty() {
+                    return Err(format!(
+                        "display_name cannot be blank for {}",
+                        instance.instance_id
+                    ));
+                }
+            }
             if !instance_ids.insert(instance.instance_id.clone()) {
                 return Err(format!("duplicate instance_id: {}", instance.instance_id));
             }
@@ -82,6 +143,30 @@ impl BridgeInstancesState {
                     instance.log_broadcast_port
                 ));
             }
+            match instance.artifact_source {
+                ArtifactSource::Installed => {
+                    if instance.installed_channel.is_none() {
+                        return Err(format!(
+                            "installed_channel is required for installed instance {}",
+                            instance.instance_id
+                        ));
+                    }
+                }
+                ArtifactSource::Workspace => {
+                    if instance.installed_channel.is_some() {
+                        return Err(format!(
+                            "installed_channel must be empty for workspace instance {}",
+                            instance.instance_id
+                        ));
+                    }
+                    if instance.installed_pinned_tag.is_some() {
+                        return Err(format!(
+                            "installed_pinned_tag must be empty for workspace instance {}",
+                            instance.instance_id
+                        ));
+                    }
+                }
+            }
         }
 
         Ok(())
@@ -95,11 +180,16 @@ mod tests {
     fn binding(instance_id: &str, serial: &str, offset: u16) -> BridgeInstanceBinding {
         BridgeInstanceBinding {
             instance_id: instance_id.to_string(),
+            display_name: None,
             app: BridgeApp::Bitwig,
             mode: BridgeMode::Hardware,
             controller_serial: serial.to_string(),
             controller_vid: 0x16C0,
             controller_pid: 0x0489,
+            target: FirmwareTarget::Bitwig,
+            artifact_source: ArtifactSource::Installed,
+            installed_channel: Some(Channel::Stable),
+            installed_pinned_tag: None,
             host_udp_port: 9000 + offset,
             control_port: 7999 + offset,
             log_broadcast_port: 9999 + offset,
@@ -144,5 +234,18 @@ mod tests {
 
         let err = state.validate().unwrap_err();
         assert!(err.contains("duplicate control_port"));
+    }
+
+    #[test]
+    fn validate_rejects_workspace_release_fields() {
+        let mut instance = binding("bitwig-hardware-17081760", "17081760", 0);
+        instance.artifact_source = ArtifactSource::Workspace;
+        let state = BridgeInstancesState {
+            schema: BRIDGE_INSTANCES_SCHEMA,
+            instances: vec![instance],
+        };
+
+        let err = state.validate().unwrap_err();
+        assert!(err.contains("installed_channel must be empty"));
     }
 }

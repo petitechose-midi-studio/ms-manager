@@ -5,19 +5,26 @@ use crate::services::flash;
 use crate::state::AppState;
 
 #[tauri::command]
-pub async fn flash_firmware(
-    profile: String,
+pub async fn flash_bridge_instance(
+    instance_id: String,
     app: tauri::AppHandle,
     state: State<'_, AppState>,
 ) -> ApiResult<ms_manager_core::LastFlashed> {
-    let settings = state.settings_get();
-    let installed = state.install_state_get();
     let layout = state.layout_get();
-    if settings.artifact_source == ms_manager_core::ArtifactSource::Installed && installed.is_none() {
-        return Err(ApiError::new("not_installed", "install the host bundle first"));
-    }
+    let installed = state.install_state_get();
+    let binding = state
+        .bridge_instances_get()
+        .instances
+        .into_iter()
+        .find(|binding| binding.instance_id == instance_id)
+        .ok_or_else(|| {
+            ApiError::new(
+                "bridge_instance_not_found",
+                format!("unknown instance_id: {instance_id}"),
+            )
+        })?;
 
-    let last = flash::flash_firmware(&app, &layout, &settings, installed.as_ref(), &profile).await?;
-    let _ = state.controller_last_flashed_set(last.clone())?;
+    let last = flash::flash_firmware_for_binding(&app, &layout, installed.as_ref(), &binding).await?;
+    let _ = state.controller_last_flashed_set(&binding.instance_id, last.clone())?;
     Ok(last)
 }

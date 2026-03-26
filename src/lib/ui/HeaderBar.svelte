@@ -1,9 +1,6 @@
 <script lang="ts">
   import type { DeviceStatus, Platform } from "$lib/api/types";
   import ControllerStatus from "$lib/ui/ControllerStatus.svelte";
-
-  export let hostInstalled: boolean;
-  export let hostLabel: string;
   export let device: DeviceStatus;
   export let platform: Platform | null;
 
@@ -13,7 +10,7 @@
 
 <header class="bar">
   <div class="title">
-    <span class="app">MIDI STUDIO MANAGER</span>
+    <span class="app">MIDI Studio Manager</span>
   </div>
 
   <div class="meta">
@@ -24,12 +21,12 @@
       </div>
     {/if}
 
-    <div class="badge" data-kind={hostInstalled ? "ok" : "muted"}>
-      <span class="dot" aria-hidden="true"></span>
-      <span class="text">{hostInstalled ? hostLabel : "not installed"}</span>
-    </div>
-
-    <ControllerStatus device={device} variant="badge" label="usb" />
+    <ControllerStatus
+      device={device}
+      variant="badge"
+      textOverride={`${device.count} device${device.count === 1 ? "" : "s"}`}
+      align="center"
+    />
 
     {#if platform}
       <div class="badge">
@@ -46,10 +43,11 @@
     align-items: center;
     gap: 12px;
     padding: 6px 2px;
+    font-family: var(--font-sans);
   }
 
   .app {
-    font-weight: 800;
+    font-weight: 700;
     letter-spacing: 0.08em;
     text-transform: uppercase;
     color: var(--value);
@@ -75,15 +73,12 @@
     line-height: 16px;
     font-size: 12px;
     user-select: none;
+    font-family: var(--font-sans);
+    font-weight: 500;
   }
 
   :global(:root[data-theme="light"]) .badge {
     background: rgba(0, 0, 0, 0.03);
-  }
-
-  .badge[data-kind="ok"] {
-    color: var(--value);
-    border-color: var(--border-strong);
   }
 
   .badge[data-kind="warn"] {
@@ -98,15 +93,7 @@
     background: var(--border-strong);
   }
 
-  .badge[data-kind="ok"] .dot {
-    background: var(--ok);
-  }
-
   .badge[data-kind="warn"] .dot {
     background: var(--warn);
-  }
-
-  .badge[data-kind="muted"] .dot {
-    background: var(--border-strong);
   }
 </style>

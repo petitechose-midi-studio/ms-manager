@@ -9,6 +9,8 @@
   export let variant: "badge" | "pill" = "pill";
   export let label: string = "";
   export let showCount = false;
+  export let textOverride: string | null = null;
+  export let align: "end" | "center" = "end";
 
   let anchorEl: HTMLButtonElement | null = null;
   let overlayEl: HTMLDivElement | null = null;
@@ -21,6 +23,7 @@
   let y = 0;
 
   function statusText(d: DeviceStatus): string {
+    if (textOverride?.trim()) return textOverride.trim();
     const base = d.connected ? "connected" : "not detected";
     return label ? `${label}: ${base}` : base;
   }
@@ -67,7 +70,10 @@
     const o = overlayEl.getBoundingClientRect();
     const margin = 12;
 
-    let nextX = a.right - o.width;
+    let nextX =
+      align === "center"
+        ? a.left + a.width / 2 - o.width / 2
+        : a.right - o.width;
     nextX = Math.max(margin, Math.min(nextX, window.innerWidth - o.width - margin));
 
     let nextY = a.bottom + 10;
@@ -166,6 +172,7 @@
   .wrap {
     appearance: none;
     font: inherit;
+    font-family: var(--font-sans);
     position: relative;
     display: inline-flex;
     align-items: center;
@@ -226,8 +233,7 @@
     padding: 2px 6px;
     border-radius: 6px;
     border: 1px solid var(--border);
-    font-family: var(--font-mono);
-    font-weight: 800;
+    font-weight: 700;
     font-size: 11px;
     line-height: 14px;
     color: inherit;
@@ -248,7 +254,7 @@
 
   .overlayHead {
     color: var(--muted);
-    font-weight: 800;
+    font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.08em;
     font-size: 11px;
@@ -279,8 +285,7 @@
   }
 
   .kind {
-    font-family: var(--font-mono);
-    font-weight: 800;
+    font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.06em;
     font-size: 11px;
@@ -289,8 +294,7 @@
   }
 
   .port {
-    font-family: var(--font-mono);
-    font-weight: 700;
+    font-weight: 600;
     font-size: 12px;
     line-height: 16px;
     color: var(--value);
@@ -303,5 +307,6 @@
     line-height: 16px;
     color: var(--muted);
     overflow-wrap: anywhere;
+    font-family: var(--font-sans);
   }
 </style>

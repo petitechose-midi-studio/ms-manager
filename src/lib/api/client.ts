@@ -2,17 +2,18 @@ import { invokeApi } from "$lib/api/tauri";
 import type {
   AppUpdateStatus,
   ArtifactSource,
+  BridgeInstanceArtifactSourceSetRequest,
   BridgeInstanceBindingResponse,
   BridgeInstanceBindRequest,
+  BridgeInstanceInstalledReleaseSetRequest,
+  BridgeInstanceNameSetRequest,
+  BridgeInstanceTargetSetRequest,
   BridgeInstancesResponse,
   Channel,
   BridgeStatus,
   DeviceStatus,
-  InstallPlan,
   InstallState,
   LastFlashed,
-  LatestManifestResponse,
-  Settings,
   Status,
 } from "$lib/api/types";
 
@@ -32,10 +33,6 @@ export function bridgeLogOpen(): Promise<void> {
   return invokeApi<void>("bridge_log_open");
 }
 
-export function bridgeInstancesGet(): Promise<BridgeInstancesResponse> {
-  return invokeApi<BridgeInstancesResponse>("bridge_instances_get");
-}
-
 export function bridgeInstanceBind(
   request: BridgeInstanceBindRequest,
 ): Promise<BridgeInstanceBindingResponse> {
@@ -53,60 +50,48 @@ export function bridgeInstanceEnableSet(
   return invokeApi<BridgeInstancesResponse>("bridge_instance_enable_set", { instanceId, enabled });
 }
 
-export function settingsGet(): Promise<Settings> {
-  return invokeApi<Settings>("settings_get");
+export function bridgeInstanceTargetSet(
+  request: BridgeInstanceTargetSetRequest,
+): Promise<BridgeInstancesResponse> {
+  return invokeApi<BridgeInstancesResponse>("bridge_instance_target_set", { request });
 }
 
-export function settingsSetChannel(channel: Channel): Promise<Settings> {
-  return invokeApi<Settings>("settings_set_channel", { channel });
+export function bridgeInstanceArtifactSourceSet(
+  request: BridgeInstanceArtifactSourceSetRequest,
+): Promise<BridgeInstancesResponse> {
+  return invokeApi<BridgeInstancesResponse>("bridge_instance_artifact_source_set", { request });
 }
 
-export function settingsSetProfile(profile: string): Promise<Settings> {
-  return invokeApi<Settings>("settings_set_profile", { profile });
+export function bridgeInstanceInstalledReleaseSet(
+  request: BridgeInstanceInstalledReleaseSetRequest,
+): Promise<BridgeInstancesResponse> {
+  return invokeApi<BridgeInstancesResponse>("bridge_instance_installed_release_set", { request });
 }
 
-export function settingsSetPinnedTag(pinnedTag: string | null): Promise<Settings> {
-  return invokeApi<Settings>("settings_set_pinned_tag", { pinnedTag });
-}
-
-export function settingsSetArtifactSource(artifactSource: ArtifactSource): Promise<Settings> {
-  return invokeApi<Settings>("settings_set_artifact_source", { artifactSource });
-}
-
-export function resolveLatestManifest(channel: Channel): Promise<LatestManifestResponse> {
-  return invokeApi<LatestManifestResponse>("resolve_latest_manifest", { channel });
-}
-
-export function resolveManifestForTag(channel: Channel, tag: string): Promise<LatestManifestResponse> {
-  return invokeApi<LatestManifestResponse>("resolve_manifest_for_tag", { channel, tag });
+export function bridgeInstanceNameSet(
+  request: BridgeInstanceNameSetRequest,
+): Promise<BridgeInstancesResponse> {
+  return invokeApi<BridgeInstancesResponse>("bridge_instance_name_set", { request });
 }
 
 export function listChannelTags(channel: Channel): Promise<string[]> {
   return invokeApi<string[]>("list_channel_tags", { channel });
 }
 
-export function planLatestInstall(channel: Channel, profile: string): Promise<InstallPlan> {
-  return invokeApi<InstallPlan>("plan_latest_install", { channel, profile });
+export function installBridgeInstance(instanceId: string): Promise<InstallState> {
+  return invokeApi<InstallState>("install_bridge_instance", { instanceId });
 }
 
-export function installLatest(channel: Channel, profile: string): Promise<InstallState> {
-  return invokeApi<InstallState>("install_latest", { channel, profile });
-}
-
-export function installSelected(): Promise<InstallState> {
-  return invokeApi<InstallState>("install_selected");
-}
-
-export function flashFirmware(profile: string): Promise<LastFlashed> {
-  return invokeApi<LastFlashed>("flash_firmware", { profile });
+export function flashBridgeInstance(instanceId: string): Promise<LastFlashed> {
+  return invokeApi<LastFlashed>("flash_bridge_instance", { instanceId });
 }
 
 export function payloadRootRelocate(newRoot: string): Promise<Status> {
   return invokeApi<Status>("payload_root_relocate", { newRoot });
 }
 
-export function payloadRootOpen(): Promise<void> {
-  return invokeApi<void>("payload_root_open");
+export function pathOpen(path: string): Promise<void> {
+  return invokeApi<void>("path_open", { path });
 }
 
 export function appUpdateCheck(): Promise<AppUpdateStatus> {

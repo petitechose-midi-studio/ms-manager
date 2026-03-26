@@ -18,6 +18,7 @@ pub async fn apply_install(
     layout: &PayloadLayout,
     plan: &InstallPlan,
     cached: &[CachedAsset],
+    activate_current: bool,
 ) -> ApiResult<InstalledVersion> {
     let versions_dir = layout.versions_dir();
     std::fs::create_dir_all(&versions_dir).map_err(|e| {
@@ -35,7 +36,9 @@ pub async fn apply_install(
         ensure_bundle_executables(&version_dir)?;
     }
 
-    set_current(layout, &plan.tag)?;
+    if activate_current {
+        set_current(layout, &plan.tag)?;
+    }
 
     Ok(InstalledVersion {
         tag: plan.tag.clone(),
@@ -258,14 +261,7 @@ pub(crate) fn set_current(layout: &PayloadLayout, tag: &str) -> ApiResult<()> {
     if std::fs::symlink_metadata(&current).is_ok() {
         #[cfg(windows)]
         {
-            // `current` is expected to be a junction. Use remove_dir (NOT remove_dir_all) to avoid
-            // any risk of following the reparse point.
-            std::fs::remove_dir(&current).map_err(|e| {
-                ApiError::new(
-                    "io_remove_failed",
-                    format!("remove {}: {e}", current.display()),
-                )
-            })?;
+            remove_windows_junction(&current)?;
         }
 
         #[cfg(unix)]
@@ -314,4 +310,30 @@ pub(crate) fn set_current(layout: &PayloadLayout, tag: &str) -> ApiResult<()> {
     }
 
     Ok(())
+}
+
+#[cfg(windows)]
+fn remove_windows_junction(path: &Path) -> ApiResult<()> {
+    let mut cmd = std::process::Command::new("cmd");
+    process::no_console_window_std(&mut cmd);
+    let out = cmd
+        .args(["/c", "rmdir"])
+        .arg(path)
+        .output()
+        .map_err(|e| ApiError::new("io_exec_failed", format!("rmdir {}: {e}", path.display())))?;
+
+    if out.status.success() || !path.exists() {
+        return Ok(());
+    }
+
+    Err(ApiError::new(
+        "io_remove_failed",
+        format!("remove {}: {}", path.display(), String::from_utf8_lossy(&out.stderr).trim()),
+    )
+    .with_details(serde_json::json!({
+        "path": path.display().to_string(),
+        "exit_code": out.status.code(),
+        "stdout": String::from_utf8_lossy(&out.stdout),
+        "stderr": String::from_utf8_lossy(&out.stderr),
+    })))
 }

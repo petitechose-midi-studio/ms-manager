@@ -2,34 +2,39 @@
   import { onMount } from "svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { LogicalSize } from "@tauri-apps/api/dpi";
-  import { bridgeLogOpen, payloadRootOpen } from "$lib/api/client";
+  import { bridgeLogOpen, pathOpen } from "$lib/api/client";
 
   import type { ActivityEntry, ActivityFilter } from "$lib/state/activity";
-  import { createActivityLog } from "$lib/state/activity";
+  import { createActivityLog, matchesActivityFilter } from "$lib/state/activity";
   import { createDashboard } from "$lib/state/dashboard";
 
   import HeaderBar from "$lib/ui/HeaderBar.svelte";
-  import ChannelDropdown from "$lib/ui/ChannelDropdown.svelte";
-  import TagDropdown from "$lib/ui/TagDropdown.svelte";
-  import ProfilePicker, { type ProfileOption } from "$lib/ui/ProfilePicker.svelte";
-  import ContextMenu from "$lib/ui/ContextMenu.svelte";
-  import FlashFirmwareModal from "$lib/ui/FlashFirmwareModal.svelte";
   import RelocatePayloadModal from "$lib/ui/RelocatePayloadModal.svelte";
   import ActivityDrawer from "$lib/ui/ActivityDrawer.svelte";
-  import ControllerStatus from "$lib/ui/ControllerStatus.svelte";
+  import InstanceTabs from "$lib/ui/instance/InstanceTabs.svelte";
+  import type { ControllerTabItem } from "$lib/ui/instance/InstanceTabs.svelte";
+  import InstanceHeader from "$lib/ui/instance/InstanceHeader.svelte";
+  import InstanceConfigurationCard from "$lib/ui/instance/InstanceConfigurationCard.svelte";
+  import InstanceActionsCard from "$lib/ui/instance/InstanceActionsCard.svelte";
+  import UnboundControllerView from "$lib/ui/instance/UnboundControllerView.svelte";
 
-  const activity = createActivityLog(800);
+  const activity = createActivityLog(1000);
   const dash = createDashboard(activity);
   const dashState = dash.state;
   const activityEntries = activity.entries;
 
   let cleanup: (() => void) | null = null;
+  let activeTabKey: string | null = null;
+  let lastTagsChannel: "stable" | "beta" | "nightly" | null = null;
+  let nameDraft = "";
+  let nameDraftKey: string | null = null;
+  let renamingInstanceId: string | null = null;
 
   onMount(() => {
     void (async () => {
       try {
         const win = getCurrentWindow();
-        await win.setMinSize(new LogicalSize(640, 480));
+        await win.setMinSize(new LogicalSize(720, 520));
       } catch {
         // ignore
       }
@@ -44,66 +49,21 @@
     };
   });
 
-  function labelForProfile(id: string): string {
-    if (id === "default") return "Standalone";
-    if (id === "bitwig") return "Bitwig";
-    return id;
+  function fmtTargetLabel(target: string): string {
+    if (target === "standalone") return "Standalone";
+    if (target === "bitwig") return "Bitwig";
+    return target;
   }
 
-  $: profileOptions = $dashState.profileOptions.map((id) => ({
-    id,
-    label: labelForProfile(id),
-    icons:
-      id === "default"
-        ? ["controller"]
-        : id === "bitwig"
-          ? ["controller", "bitwig"]
-          : undefined,
-  })) as ProfileOption[];
-
-  $: hostLabel =
-    $dashState.artifactSource === "workspace"
-      ? "workspace"
-      : $dashState.installed
-        ? `${$dashState.installed.channel}:${$dashState.installed.tag}:${$dashState.installed.profile}`
-        : "";
-
-  $: appUpdateAvailable = $dashState.appUpdate?.available ?? false;
-  $: appUpdateLabel = $dashState.appUpdate?.update
-    ? `ms-manager ${$dashState.appUpdate.update.version}`
-    : null;
-
-  $: versionValue = $dashState.pinnedTag ?? "";
-  $: versionOptions = [
-    { value: "", label: "latest" },
-    ...$dashState.tags.map((t) => ({ value: t, label: t })),
-  ];
-
-  function fmtLastFlashed(ms: number): string {
-    const age = Math.max(0, Date.now() - ms);
-    const m = Math.floor(age / 60000);
-    if (m < 1) return "just now";
-    if (m < 60) return `${m}m ago`;
-    const h = Math.floor(m / 60);
-    if (h < 24) return `${h}h ago`;
-    const d = Math.floor(h / 24);
-    return `${d}d ago`;
-  }
-
-  function fmtBridgeInstanceLabel(instanceId: string): string {
-    return instanceId.replace(/-/g, " ");
-  }
-
-  function fmtBridgeInstanceState(instance: {
-    enabled: boolean;
-    running: boolean;
-    paused: boolean;
-    serial_open: boolean;
+  function fallbackInstanceName(instance: {
+    configured_serial: string;
+    target: string;
   }): string {
-    if (!instance.enabled) return "disabled";
-    if (!instance.running) return "down";
-    if (instance.paused) return "paused";
-    return instance.serial_open ? "serial open" : "waiting";
+    return `${fmtTargetLabel(instance.target)} ${instance.configured_serial}`;
+  }
+
+  function unboundName(target: { product?: string | null; serial_number?: string | null }): string {
+    return target.product?.trim() || `Controller ${target.serial_number ?? ""}`.trim();
   }
 
   $: serialTargets = ($dashState.device.targets ?? []).filter(
@@ -113,73 +73,77 @@
   $: unboundSerialTargets = serialTargets.filter(
     (target) => !boundSerials.has(target.serial_number ?? "")
   );
-
-  $: flashRecommended = (() => {
-    const s = $dashState;
-    if (!s.device.connected) return false;
-    if (!s.hostInstalled) return false;
-    if (!s.installed) return false;
-    const desired = {
-      channel: s.installed.channel,
-      tag: s.installed.tag,
-      profile: s.profile,
-    };
-
-    if (!s.lastFlashed) return true;
-    return (
-      desired.channel !== s.lastFlashed.channel ||
-      desired.tag !== s.lastFlashed.tag ||
-      desired.profile !== s.lastFlashed.profile
-    );
-  })();
-
-  $: flashRecommendedKind = (() => {
-    const s = $dashState;
-    if (!s.device.connected) return "info";
-    if (!s.hostInstalled) return "info";
-    if (!s.installed) return "info";
-    if (!s.lastFlashed) return "warn";
-    if (s.profile !== s.lastFlashed.profile) return "warn";
-    if (s.installed.channel !== s.lastFlashed.channel) return "info";
-    if (s.installed.tag !== s.lastFlashed.tag) return "info";
-    return "info";
-  })();
-
-  async function onProfileSelect(id: string) {
-    if (
-      $dashState.installing ||
-      $dashState.flashing ||
-      $dashState.relocating ||
-      $dashState.savingSettings
-    )
-      return;
-    if (id === $dashState.profile) return;
-    await dash.setProfile(id);
-    // User choice: keep host profile even if flash is cancelled.
-    dash.openFlashModal(id);
+  $: controllerTabs = [
+    ...$dashState.bridge.instances.map(
+      (instance) =>
+        ({
+          key: `instance:${instance.instance_id}`,
+          kind: "instance",
+          serial: instance.configured_serial,
+          label: instance.display_name?.trim() || fallbackInstanceName(instance),
+          instance,
+        }) satisfies ControllerTabItem
+    ),
+    ...unboundSerialTargets.map(
+      (target) =>
+        ({
+          key: `unbound:${target.serial_number}`,
+          kind: "unbound",
+          serial: target.serial_number ?? "",
+          label: unboundName(target),
+          subtitle: target.serial_number ?? "",
+          target,
+        }) satisfies ControllerTabItem
+    ),
+  ];
+  $: if (controllerTabs.length > 0 && !controllerTabs.some((tab) => tab.key === activeTabKey)) {
+    activeTabKey = controllerTabs[0].key;
   }
-
-  function onProfileContext(id: string, x: number, y: number) {
-    if (
-      $dashState.installing ||
-      $dashState.flashing ||
-      $dashState.relocating ||
-      $dashState.savingSettings
-    )
-      return;
-    dash.openContextMenu(id, x, y);
+  $: if (controllerTabs.length === 0) {
+    activeTabKey = null;
   }
-
-  function onMenuSelect(itemId: string) {
-    const target = $dashState.ctxMenu.targetProfile;
-    dash.closeContextMenu();
-    if (itemId === "flash" && target) {
-      dash.openFlashModal(target);
+  $: activeTab = controllerTabs.find((tab) => tab.key === activeTabKey) ?? null;
+  $: activeInstance = activeTab?.kind === "instance" ? activeTab.instance : null;
+  $: activeUnboundTarget = activeTab?.kind === "unbound" ? activeTab.target : null;
+  $: dash.setActiveBridgeInstance(activeInstance?.instance_id ?? null);
+  $: activeInstalledChannel =
+    activeInstance?.artifact_source === "installed"
+      ? (activeInstance.installed_channel ?? "stable")
+      : null;
+  $: if (activeInstalledChannel && activeInstalledChannel !== lastTagsChannel) {
+    lastTagsChannel = activeInstalledChannel;
+    void dash.loadTagsForChannel(activeInstalledChannel);
+  }
+  $: if (!activeInstalledChannel) {
+    lastTagsChannel = null;
+  }
+  $: activeTagValue =
+    activeInstance?.artifact_source === "installed"
+      ? (activeInstance.installed_pinned_tag ?? "")
+      : "";
+  $: activeTagOptions = [
+    { value: "", label: "latest" },
+    ...$dashState.tags.map((tag) => ({ value: tag, label: tag })),
+  ];
+  $: if (activeInstance) {
+    const nextDraft = activeInstance.display_name?.trim() || "";
+    if (nameDraftKey !== activeInstance.instance_id) {
+      nameDraftKey = activeInstance.instance_id;
+      nameDraft = nextDraft;
     }
+  } else {
+    nameDraftKey = null;
+    nameDraft = "";
   }
+
+  $: appUpdateAvailable = $dashState.appUpdate?.available ?? false;
+  $: appUpdateLabel = $dashState.appUpdate?.update
+    ? `ms-manager ${$dashState.appUpdate.update.version}`
+    : null;
+  $: activeBusy = $dashState.bridgeMutating || $dashState.installing || $dashState.flashing;
 
   async function copyActivity(entries: ActivityEntry[], filter: ActivityFilter) {
-    const visible = filter === "all" ? entries : entries.filter((e) => e.scope === filter);
+    const visible = entries.filter((e) => matchesActivityFilter(e, filter));
     const text = activity.toText(visible);
     try {
       await navigator.clipboard.writeText(text);
@@ -188,9 +152,10 @@
     }
   }
 
-  async function openPayloadRoot() {
+  async function openSourcePath(path?: string | null) {
+    if (!path) return;
     try {
-      await payloadRootOpen();
+      await pathOpen(path);
     } catch (e) {
       const err = e as { code?: string; message?: string };
       const msg = typeof err?.message === "string" ? err.message : String(e);
@@ -204,410 +169,188 @@
     } catch (e) {
       const err = e as { code?: string; message?: string };
       const msg = typeof err?.message === "string" ? err.message : String(e);
-      activity.add("warn", "ui", `open bridge logs failed: ${msg}`, e);
+      activity.add("warn", "bridge", `open bridge logs failed: ${msg}`, e);
     }
   }
 
-  async function bindTarget(target: (typeof serialTargets)[number]) {
-    await dash.bindHardwareBridge(target);
+  async function createInstanceForActiveTarget() {
+    if (!activeUnboundTarget) return;
+    const binding = await dash.bindHardwareBridge(activeUnboundTarget);
+    if (binding) {
+      activeTabKey = `instance:${binding.instance_id}`;
+    }
   }
 
-  async function toggleBridge(instanceId: string, enabled: boolean) {
-    await dash.setBridgeEnabled(instanceId, enabled);
+  async function saveDisplayName() {
+    if (!activeInstance) return;
+    const nextValue = nameDraft.trim();
+    const currentValue = activeInstance.display_name?.trim() || "";
+    if (nextValue !== currentValue) {
+      await dash.setBridgeDisplayName(activeInstance.instance_id, nextValue || null);
+    }
+    renamingInstanceId = null;
   }
 
-  async function removeBridge(instanceId: string) {
-    await dash.removeBridge(instanceId);
+  function beginRename() {
+    if (!activeInstance) return;
+    renamingInstanceId = activeInstance.instance_id;
+    nameDraft = activeInstance.display_name?.trim() || "";
   }
+
+  async function setActiveInstanceTarget(target: "standalone" | "bitwig") {
+    if (!activeInstance || target === activeInstance.target) return;
+    await dash.setBridgeTarget(activeInstance.instance_id, target);
+  }
+
+  async function setActiveInstanceSource(source: "installed" | "workspace") {
+    if (!activeInstance || source === activeInstance.artifact_source) return;
+    await dash.setBridgeArtifactSource(activeInstance.instance_id, source);
+  }
+
+  async function setActiveInstanceChannel(channel: "stable" | "beta" | "nightly") {
+    if (!activeInstance) return;
+    await dash.setBridgeInstalledRelease(activeInstance.instance_id, channel, null);
+  }
+
+  async function setActiveInstanceTag(tag: string | null) {
+    if (!activeInstance || activeInstance.artifact_source !== "installed") return;
+    const channel = activeInstance.installed_channel ?? "stable";
+    await dash.setBridgeInstalledRelease(activeInstance.instance_id, channel, tag);
+  }
+
+  async function onTitleKeydown(event: KeyboardEvent) {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      await saveDisplayName();
+      return;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      renamingInstanceId = null;
+      nameDraft = activeInstance?.display_name?.trim() || "";
+    }
+  }
+
+  $: activeTargetProfile = activeInstance?.target === "standalone" ? "default" : "bitwig";
+  $: installedSelectionReady =
+    !!activeInstance &&
+    activeInstance.artifact_source === "installed" &&
+    (
+      activeInstance.installed_pinned_tag
+        ? activeInstance.artifacts_ready
+        : !!$dashState.installed &&
+          $dashState.installed.channel === (activeInstance.installed_channel ?? "stable") &&
+          $dashState.installed.profile === activeTargetProfile &&
+          activeInstance.artifacts_ready
+    );
+  $: canFlashActiveInstance =
+    !!activeInstance &&
+    (
+      activeInstance.artifact_source === "workspace"
+        ? activeInstance.artifacts_ready
+        : installedSelectionReady
+    );
+  $: needsDownloadActiveInstance =
+    !!activeInstance &&
+    activeInstance.artifact_source === "installed" &&
+    !installedSelectionReady;
+  $: activeVersionLabel =
+    !activeInstance
+      ? "-"
+      : activeInstance.artifact_source === "workspace"
+        ? "workspace"
+        : activeInstance.installed_pinned_tag?.trim()
+          ? activeInstance.installed_pinned_tag
+          : installedSelectionReady && $dashState.installed
+            ? $dashState.installed.tag
+            : `latest (${activeInstance.installed_channel ?? "stable"})`;
+  $: activeFlashLabel = activeInstance
+    ? `${fmtTargetLabel(activeInstance.target)} / ${activeVersionLabel}`
+    : "-";
+  $: activeErrorMessage = $dashState.error?.message ?? null;
 </script>
 
 <div class="page">
   <HeaderBar
-    hostInstalled={$dashState.hostInstalled}
-    hostLabel={hostLabel}
     device={$dashState.device}
     platform={$dashState.platform}
     appUpdateAvailable={appUpdateAvailable}
     appUpdateLabel={appUpdateLabel}
   />
 
-  <div class="grid">
-    <section class="panel">
-      <div class="panelHead">
-        <div class="panelTitle">Feed</div>
-      </div>
+  <section class="panel mainPanel">
+    <InstanceTabs tabs={controllerTabs} activeKey={activeTabKey} onSelect={(key) => (activeTabKey = key)} />
 
-      <div class="panelBody">
-        <div class="section">
-          <div class="feedRow">
-            <ChannelDropdown
-              value={$dashState.channel}
-              disabled={
-                $dashState.installing ||
-                $dashState.flashing ||
-                $dashState.relocating ||
-                $dashState.savingSettings
-              }
-              onChange={(c) => dash.setChannel(c)}
-            />
-            <TagDropdown
-              value={versionValue}
-              options={versionOptions}
-              disabled={
-                $dashState.loadingTags ||
-                $dashState.installing ||
-                $dashState.flashing ||
-                $dashState.relocating ||
-                $dashState.savingSettings
-              }
-              onChange={(v) => dash.setPinnedTag(v === "" ? null : v)}
-            />
+    <div class="panelBody">
+      {#if $dashState.booting}
+        <div class="bootState">
+          <div class="bootTitle">Starting ms-manager…</div>
+          <div class="bootGrid">
+            <div class="bootCard"></div>
+            <div class="bootCard"></div>
           </div>
         </div>
+      {:else if activeInstance}
+        <InstanceHeader
+          instance={activeInstance}
+          fallbackName={fallbackInstanceName(activeInstance)}
+          renaming={renamingInstanceId === activeInstance.instance_id}
+          {nameDraft}
+          busy={activeBusy}
+          onNameInput={(value) => (nameDraft = value)}
+          {onTitleKeydown}
+          onSaveName={saveDisplayName}
+          onBeginRename={beginRename}
+          onOpenLogs={openBridgeLogs}
+          onToggleEnabled={() => dash.setBridgeEnabled(activeInstance.instance_id, !activeInstance.enabled)}
+          onRemove={() => dash.removeBridge(activeInstance.instance_id)}
+        />
 
-        <div class="section">
-          <ProfilePicker
-            value={$dashState.profile}
-            options={profileOptions}
-            disabled={
-              $dashState.installing ||
-              $dashState.flashing ||
-              $dashState.relocating ||
-              $dashState.savingSettings
-            }
-            onSelect={onProfileSelect}
-            onContext={onProfileContext}
+        <div class="stack">
+          <InstanceConfigurationCard
+            instance={activeInstance}
+            artifactConfigPath={$dashState.artifactConfigPath}
+            disabled={activeBusy}
+            loadingTags={$dashState.loadingTags}
+            {activeTagValue}
+            {activeTagOptions}
+            needsDownload={needsDownloadActiveInstance}
+            onSourceChange={setActiveInstanceSource}
+            onTargetChange={setActiveInstanceTarget}
+            onOpenFolder={() => openSourcePath(activeInstance.artifact_location_path)}
+            onChannelChange={setActiveInstanceChannel}
+            onTagChange={setActiveInstanceTag}
+            onDownload={() => dash.installForBridgeInstance(activeInstance.instance_id)}
           />
-          <div class="hint">Click: select + suggest flash. Right click: firmware actions.</div>
+
+          <InstanceActionsCard
+            selectedFirmware={activeFlashLabel}
+            needsDownload={needsDownloadActiveInstance}
+            canFlash={canFlashActiveInstance}
+            busy={activeBusy}
+            flashing={$dashState.flashing && $dashState.flashingInstanceId === activeInstance.instance_id}
+            errorMessage={activeErrorMessage}
+            onFlash={() => dash.flashInstance(activeInstance.instance_id)}
+          />
         </div>
-
-        <div class="section">
-          <div class="sectionTitle">Actions</div>
-          <div class="actions">
-            <button
-              class="btn primary"
-              type="button"
-              disabled={
-                $dashState.installing ||
-                $dashState.flashing ||
-                $dashState.relocating ||
-                $dashState.savingSettings
-              }
-              onclick={() => dash.install()}
-            >
-              {$dashState.installing ? "Installing…" : "Install / Update"}
-            </button>
-            <button
-              class="btn"
-              type="button"
-              disabled={
-                $dashState.loadingRelease ||
-                $dashState.installing ||
-                $dashState.flashing ||
-                $dashState.relocating ||
-                $dashState.savingSettings
-              }
-              onclick={() => dash.refreshRelease()}
-            >
-              {$dashState.loadingRelease ? "Checking…" : "Check"}
-            </button>
-          </div>
-          {#if $dashState.now}
-            <div class="now">{$dashState.now}</div>
-          {/if}
-          {#if $dashState.error}
-            <div class="err">{$dashState.error.message}</div>
-          {/if}
+      {:else if activeUnboundTarget}
+        <UnboundControllerView
+          target={activeUnboundTarget}
+          busy={activeBusy}
+          onCreate={createInstanceForActiveTarget}
+        />
+      {:else}
+        <div class="emptyState">
+          <div class="emptyTitle">No controller tab available</div>
+          <div class="muted">Connect a controller to start configuring an instance.</div>
         </div>
-      </div>
-    </section>
+      {/if}
 
-    <section class="panel">
-      <div class="panelHead">
-        <div class="panelTitle">Status</div>
-      </div>
-
-      <div class="panelBody">
-        <div class="section">
-          <div class="sectionTitle">App</div>
-          <div class="kv">
-            <div class="k">Version</div>
-            <div class="v">{$dashState.appUpdate?.current_version ?? "-"}</div>
-            <div class="k">Update</div>
-            <div class="v">
-              {#if $dashState.checkingAppUpdate}
-                <span class="muted">checking…</span>
-              {:else if $dashState.appUpdate?.error}
-                <span class="muted">updates unavailable</span>
-              {:else if $dashState.appUpdate?.available && $dashState.appUpdate.update}
-                <span class="muted">available: {$dashState.appUpdate.update.version}</span>
-              {:else if $dashState.appUpdate}
-                <span class="muted">up to date</span>
-              {:else}
-                <span class="muted">not checked</span>
-              {/if}
-            </div>
-          </div>
-
-          <div class="actions" style="grid-template-columns: 1fr;">
-            {#if $dashState.appUpdate?.available}
-              <button
-                class="btn primary"
-                type="button"
-                disabled={
-                  $dashState.installingAppUpdate ||
-                  $dashState.installing ||
-                  $dashState.flashing ||
-                  $dashState.relocating ||
-                  $dashState.savingSettings
-                }
-                onclick={() => dash.installAppUpdate()}
-              >
-                {$dashState.installingAppUpdate ? "Opening…" : "Open latest release"}
-              </button>
-            {:else}
-              <button
-                class="btn"
-                type="button"
-                disabled={$dashState.checkingAppUpdate}
-                onclick={() => dash.checkAppUpdate()}
-              >
-                {$dashState.checkingAppUpdate ? "Checking…" : "Check app update"}
-              </button>
-            {/if}
-          </div>
-        </div>
-
-        <div class="section">
-          <div class="sectionTitle">Host</div>
-          <div class="kv">
-            <div class="k">Source</div>
-            <div class="v rootRow">
-              <span class="path">{$dashState.artifactSource}</span>
-              <span class="rootActions">
-                <button
-                  class="mini"
-                  type="button"
-                  disabled={$dashState.savingSettings || $dashState.artifactSource === "installed"}
-                  onclick={() => dash.setArtifactSource("installed")}
-                >
-                  Installed
-                </button>
-                <button
-                  class="mini"
-                  type="button"
-                  disabled={$dashState.savingSettings || $dashState.artifactSource === "workspace"}
-                  onclick={() => dash.setArtifactSource("workspace")}
-                >
-                  Workspace
-                </button>
-              </span>
-            </div>
-            <div class="k">Ready</div>
-            <div class="v">{$dashState.hostInstalled ? hostLabel : "not ready"}</div>
-            <div class="k">Root</div>
-            <div class="v rootRow">
-              <span class="path">{$dashState.payloadRoot ?? "-"}</span>
-              <span class="rootActions">
-                <button
-                  class="mini"
-                  type="button"
-                  disabled={!$dashState.payloadRoot || $dashState.relocating}
-                  onclick={openPayloadRoot}
-                >
-                  Open
-                </button>
-                <button
-                  class="mini"
-                  type="button"
-                  disabled={
-                    $dashState.installing ||
-                    $dashState.flashing ||
-                    $dashState.relocating ||
-                    $dashState.savingSettings
-                  }
-                  onclick={() => dash.openRelocateModal()}
-                >
-                  Move…
-                </button>
-              </span>
-            </div>
-            <div class="k">Dev config</div>
-            <div class="v">
-              {$dashState.artifactConfigPath ?? "-"}
-            </div>
-          </div>
-          {#if $dashState.artifactMessage}
-            <div class="muted">{$dashState.artifactMessage}</div>
-          {/if}
-        </div>
-
-        <div class="section">
-          <div class="sectionTitle">Bridge</div>
-          <div class="kv">
-            <div class="k">Installed</div>
-            <div class="v">{$dashState.bridge.installed ? "yes" : "no"}</div>
-            <div class="k">Running</div>
-            <div class="v">{$dashState.bridge.running ? "yes" : "no"}</div>
-            <div class="k">Paused</div>
-            <div class="v">{$dashState.bridge.running ? ($dashState.bridge.paused ? "yes" : "no") : "-"}</div>
-            <div class="k">Serial</div>
-            <div class="v">
-              {$dashState.bridge.running ? ($dashState.bridge.serial_open ? "open" : "waiting") : "-"}
-            </div>
-            <div class="k">Version</div>
-            <div class="v">{$dashState.bridge.version ?? "-"}</div>
-            <div class="k">Logs</div>
-            <div class="v rootRow">
-              <span class="path">bridge logs</span>
-              <span class="rootActions">
-                <button class="mini" type="button" onclick={openBridgeLogs}>Open</button>
-              </span>
-            </div>
-          </div>
-          {#if $dashState.bridge.message && !$dashState.bridge.running}
-            <div class="muted">{$dashState.bridge.message}</div>
-          {/if}
-
-          <div class="bridgeList">
-            <div class="bridgeListHead">Instances ({$dashState.bridge.instances.length})</div>
-            {#if !$dashState.bridge.instances.length}
-              <div class="muted">No bridge instance configured.</div>
-            {:else}
-              {#each $dashState.bridge.instances as instance (instance.instance_id)}
-                <div class="bridgeCard">
-                  <div class="bridgeCardTop">
-                    <div>
-                      <div class="bridgeName">{fmtBridgeInstanceLabel(instance.instance_id)}</div>
-                      <div class="bridgeMeta">
-                        serial {instance.configured_serial}
-                        {#if instance.resolved_serial_port}
-                          · {instance.resolved_serial_port}
-                        {/if}
-                      </div>
-                    </div>
-                    <div class="bridgeState" data-running={instance.running}>
-                      {fmtBridgeInstanceState(instance)}
-                    </div>
-                  </div>
-                  <div class="bridgePorts">
-                    host {instance.host_udp_port} · ctl {instance.control_port} · log {instance.log_broadcast_port}
-                  </div>
-                  {#if instance.message && !instance.running}
-                    <div class="muted">{instance.message}</div>
-                  {/if}
-                  <div class="bridgeActions">
-                    <button
-                      class="mini"
-                      type="button"
-                      disabled={$dashState.bridgeMutating || $dashState.flashing || $dashState.installing}
-                      onclick={() => toggleBridge(instance.instance_id, !instance.enabled)}
-                    >
-                      {instance.enabled ? "Disable" : "Enable"}
-                    </button>
-                    <button
-                      class="mini"
-                      type="button"
-                      disabled={$dashState.bridgeMutating || $dashState.flashing || $dashState.installing}
-                      onclick={() => removeBridge(instance.instance_id)}
-                    >
-                      Remove
-                    </button>
-                  </div>
-                </div>
-              {/each}
-            {/if}
-          </div>
-
-          <div class="bridgeList">
-            <div class="bridgeListHead">Detected Controllers</div>
-            {#if !serialTargets.length}
-              <div class="muted">No serial controller detected.</div>
-            {:else if !unboundSerialTargets.length}
-              <div class="muted">All detected controllers already have a bridge binding.</div>
-            {:else}
-              {#each unboundSerialTargets as target (target.target_id)}
-                <div class="bridgeCard">
-                  <div class="bridgeCardTop">
-                    <div>
-                      <div class="bridgeName">{target.product ?? "Controller"}</div>
-                      <div class="bridgeMeta">
-                        {target.serial_number}
-                        {#if target.port_name}
-                          · {target.port_name}
-                        {/if}
-                      </div>
-                    </div>
-                  </div>
-                  <div class="bridgeActions">
-                    <button
-                      class="mini"
-                      type="button"
-                      disabled={$dashState.bridgeMutating || $dashState.flashing || $dashState.installing}
-                      onclick={() => bindTarget(target)}
-                    >
-                      Bind Bitwig
-                    </button>
-                  </div>
-                </div>
-              {/each}
-            {/if}
-          </div>
-        </div>
-
-        <div class="section">
-          <div class="sectionTitle">Controller</div>
-          <div class="kv">
-            <div class="k">Controller</div>
-            <div class="v">
-              <ControllerStatus device={$dashState.device} variant="pill" showCount={true} />
-            </div>
-            <div class="k">Last flashed</div>
-            <div class="v">
-              {#if $dashState.lastFlashed}
-                {$dashState.lastFlashed.channel}:{ $dashState.lastFlashed.tag }:{
-                  $dashState.lastFlashed.profile
-                }
-                <span class="muted">({fmtLastFlashed($dashState.lastFlashed.flashed_at_ms)})</span>
-              {:else}
-                <span class="muted">unknown</span>
-              {/if}
-            </div>
-          </div>
-
-        {#if flashRecommended}
-          <div class="note" data-kind={flashRecommendedKind}>
-            <span>Suggested: flash firmware to match selected profile.</span>
-            <button
-              class="link"
-              data-kind={flashRecommendedKind}
-              type="button"
-              onclick={() => dash.openFlashModal($dashState.profile)}
-            >
-              Flash now
-            </button>
-          </div>
-        {/if}
-      </div>
-
-      <div class="section">
-        <div class="sectionTitle">Release</div>
-        {#if !$dashState.release}
-          <div class="muted">Not checked.</div>
-        {:else if !$dashState.release.available}
-          <div class="muted">{$dashState.release.message ?? "No release."}</div>
-        {:else}
-          <div class="kv">
-            <div class="k">Channel</div>
-            <div class="v">{$dashState.release.channel}</div>
-            <div class="k">Tag</div>
-            <div class="v">{$dashState.release.tag}</div>
-          </div>
-        {/if}
-      </div>
-      </div>
-    </section>
-  </div>
+      {#if $dashState.now}
+        <div class="muted">{$dashState.now}</div>
+      {/if}
+    </div>
+  </section>
 
   <ActivityDrawer
     open={$dashState.activityOpen}
@@ -617,31 +360,6 @@
     onFilter={(f) => dash.setActivityFilter(f)}
     onCopy={() => copyActivity($activityEntries, $dashState.activityFilter)}
     onClear={() => activity.clear()}
-  />
-
-  <ContextMenu
-    open={$dashState.ctxMenu.open}
-    x={$dashState.ctxMenu.x}
-    y={$dashState.ctxMenu.y}
-    items={[{ id: "flash", label: "Flash firmware" }]}
-    onSelect={onMenuSelect}
-    onClose={() => dash.closeContextMenu()}
-  />
-
-  <FlashFirmwareModal
-    open={$dashState.flashModal.open}
-    targetProfile={$dashState.flashModal.targetProfile}
-    hostInstalled={$dashState.hostInstalled}
-    artifactSource={$dashState.artifactSource}
-    artifactMessage={$dashState.artifactMessage}
-    installed={$dashState.installed}
-    controllerConnected={$dashState.device.connected}
-    flashing={$dashState.flashing}
-    progress={$dashState.flashProgress}
-    ack={$dashState.flashModal.ack}
-    onAck={(v) => dash.setFlashAck(v)}
-    onCancel={() => dash.cancelFlashModal()}
-    onConfirm={() => dash.confirmFlashModal()}
   />
 
   <RelocatePayloadModal
@@ -667,13 +385,6 @@
     gap: 12px;
   }
 
-  .grid {
-    display: grid;
-    grid-template-columns: 340px 1fr;
-    gap: 12px;
-    min-height: 0;
-  }
-
   .panel {
     border: 1px solid var(--border);
     border-radius: 6px;
@@ -684,316 +395,89 @@
     min-height: 0;
   }
 
-  .panelHead {
-    padding: 10px 12px;
-    border-bottom: 1px solid var(--border);
-    background: rgba(0, 0, 0, 0.08);
-  }
-
-  :global(:root[data-theme="light"]) .panelHead {
-    background: rgba(0, 0, 0, 0.03);
-  }
-
-  .panelTitle {
-    color: var(--value);
-    font-weight: 800;
-    text-transform: uppercase;
-    letter-spacing: 0.12em;
-    font-size: 12px;
-    line-height: 14px;
+  .mainPanel {
+    min-height: 0;
   }
 
   .panelBody {
-    padding: 12px;
-    padding-right: 10px;
+    padding: 14px;
     overflow: auto;
+    display: grid;
+    gap: 14px;
     min-height: 0;
+  }
+
+  .stack {
     display: grid;
-    gap: 14px;
-    align-content: start;
-    scrollbar-gutter: stable;
-  }
-
-  .section {
-    display: grid;
-    gap: 10px;
-  }
-
-  .feedRow {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 14px;
-    align-items: flex-end;
-  }
-
-  .sectionTitle {
-    color: var(--muted);
-    font-weight: 800;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    font-size: 11px;
-    line-height: 14px;
-    padding-bottom: 6px;
-    border-bottom: 1px solid var(--border);
-  }
-
-  .actions {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 10px;
-  }
-
-  .btn {
-    appearance: none;
-    font: inherit;
-    padding: 7px 10px;
-    border-radius: 6px;
-    border: 1px solid var(--border);
-    background: transparent;
-    color: var(--muted);
-    cursor: pointer;
-    font-weight: 800;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    font-size: 12px;
-    text-align: left;
-  }
-
-  .btn.primary {
-    background: var(--value);
-    color: var(--bg);
-    border-color: var(--value);
-  }
-
-  .btn:disabled {
-    opacity: 0.55;
-    cursor: not-allowed;
-  }
-
-  .hint {
-    color: var(--muted);
-    font-size: 12px;
-    line-height: 16px;
-  }
-
-  .now {
-    color: var(--muted);
-    font-size: 12px;
-    line-height: 16px;
-    border: 1px dashed var(--border);
-    border-radius: 6px;
-    padding: 10px 12px;
-  }
-
-  .err {
-    color: var(--err);
-    font-size: 12px;
-    line-height: 16px;
-    border: 1px solid var(--err);
-    border-radius: 6px;
-    padding: 10px 12px;
-  }
-
-  .kv {
-    display: grid;
-    grid-template-columns: 120px 1fr;
-    gap: 8px 10px;
-    align-items: baseline;
-  }
-
-  .rootRow {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: 10px;
-  }
-
-  .path {
-    overflow-wrap: anywhere;
-  }
-
-  .rootActions {
-    display: inline-flex;
-    gap: 8px;
-    flex: 0 0 auto;
-  }
-
-  .mini {
-    appearance: none;
-    font: inherit;
-    border: 1px solid var(--border);
-    background: transparent;
-    color: var(--muted);
-    border-radius: 6px;
-    padding: 6px 8px;
-    cursor: pointer;
-    font-weight: 800;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    font-size: 11px;
-    line-height: 14px;
-  }
-
-  .mini:disabled {
-    opacity: 0.55;
-    cursor: not-allowed;
-  }
-
-  .k {
-    color: var(--muted);
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    font-size: 11px;
-    line-height: 14px;
-    font-family: var(--font-mono);
-  }
-
-  .k::after {
-    content: ":";
-    opacity: 0.6;
-  }
-
-  .v {
-    overflow-wrap: anywhere;
-    color: var(--fg);
-    opacity: 0.86;
-    font-family: var(--font-mono);
-    font-weight: 600;
+    gap: 12px;
   }
 
   .muted {
     color: var(--muted);
-  }
-
-  .bridgeList {
-    display: grid;
-    gap: 8px;
-  }
-
-  .bridgeListHead {
-    color: var(--muted);
     font-size: 12px;
-    font-weight: 800;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
+    line-height: 16px;
   }
 
-  .bridgeCard {
+  .emptyState {
     display: grid;
-    gap: 8px;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 10px 12px;
-    background: rgba(0, 0, 0, 0.04);
+    gap: 6px;
+    padding: 10px 0;
   }
 
-  :global(:root[data-theme="light"]) .bridgeCard {
-    background: rgba(0, 0, 0, 0.02);
-  }
-
-  .bridgeCardTop {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: 10px;
-  }
-
-  .bridgeName {
+  .emptyTitle {
     color: var(--fg);
-    font-weight: 800;
+    font-family: var(--font-sans);
+    font-weight: 700;
+    font-size: 18px;
+    line-height: 22px;
+  }
+
+  .bootState {
+    display: grid;
+    gap: 14px;
+  }
+
+  .bootTitle {
+    color: var(--muted);
+    font-family: var(--font-sans);
+    font-weight: 600;
     font-size: 13px;
-    line-height: 16px;
+    line-height: 18px;
   }
 
-  .bridgeMeta,
-  .bridgePorts {
-    color: var(--muted);
-    font-size: 12px;
-    line-height: 16px;
-    font-family: var(--font-mono);
-    overflow-wrap: anywhere;
+  .bootGrid {
+    display: grid;
+    gap: 12px;
   }
 
-  .bridgeState {
-    color: var(--muted);
-    font-size: 11px;
-    line-height: 14px;
-    font-weight: 800;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
+  .bootCard {
+    min-height: 136px;
     border: 1px solid var(--border);
-    border-radius: 999px;
-    padding: 4px 8px;
-    white-space: nowrap;
+    border-radius: 8px;
+    background:
+      linear-gradient(
+        90deg,
+        rgba(255, 255, 255, 0.02) 0%,
+        rgba(255, 255, 255, 0.06) 50%,
+        rgba(255, 255, 255, 0.02) 100%
+      );
+    background-size: 220% 100%;
+    animation: bootShimmer 1.3s linear infinite;
   }
 
-  .bridgeState[data-running="true"] {
-    color: var(--ok);
-    border-color: var(--ok);
-  }
-
-  .bridgeActions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-  }
-
-  .note {
-    border: 1px dashed var(--border-strong);
-    border-radius: 6px;
-    padding: 10px 12px;
-    color: var(--muted);
-    font-size: 12px;
-    line-height: 16px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 10px;
-    background: var(--bg);
-  }
-
-  .note[data-kind="warn"] {
-    border-color: var(--warn);
-  }
-
-  .link {
-    appearance: none;
-    font: inherit;
-    color: var(--value);
-    background: transparent;
-    border: 1px solid var(--border-strong);
-    border-radius: 6px;
-    padding: 6px 8px;
-    cursor: pointer;
-    font-weight: 900;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    font-size: 11px;
-  }
-
-  .link[data-kind="warn"] {
-    color: var(--warn);
-    border-color: var(--warn);
-  }
-
-  @media (max-width: 860px) {
-    .grid {
-      grid-template-columns: 1fr;
-      grid-template-rows: 1fr 1fr;
+  @keyframes bootShimmer {
+    from {
+      background-position: 200% 0;
+    }
+    to {
+      background-position: -20% 0;
     }
   }
 
-  @media (max-width: 520px) {
-    .actions {
-      grid-template-columns: 1fr;
-    }
-    .kv {
-      grid-template-columns: 1fr;
-    }
-    .note {
-      flex-direction: column;
-      align-items: flex-start;
+  @media (max-width: 980px) {
+    .page {
+      padding: 12px;
+      gap: 10px;
     }
   }
 </style>

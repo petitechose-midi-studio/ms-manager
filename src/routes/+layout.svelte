@@ -51,7 +51,7 @@
 
     --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
       "Liberation Mono", "Courier New", monospace;
-    --font-sans: "IBM Plex Sans", "Space Grotesk", ui-sans-serif, "Noto Sans", sans-serif;
+    --font-sans: "Aptos", "Segoe UI Variable Text", "Segoe UI", Arial, sans-serif;
 
     font-size: 15px;
     line-height: 22px;

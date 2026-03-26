@@ -4,7 +4,6 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
-pub const DEFAULT_CONTROL_PORT: u16 = 7999;
 const SCHEMA: u32 = 1;
 
 #[derive(Debug, serde::Serialize)]

@@ -1,17 +1,25 @@
 use std::process::Stdio;
 use std::time::Duration;
 
-use ms_manager_core::{BridgeApp, BridgeInstanceBinding, BridgeInstancesState, BridgeMode};
+use ms_manager_core::{
+    ArtifactSource, BridgeApp, BridgeInstanceBinding, BridgeInstancesState, BridgeMode,
+    FirmwareTarget,
+};
 use tokio::process::Command;
 
 use tauri::Manager;
 
 use crate::layout::PayloadLayout;
 use crate::models::DeviceTargetKind;
-use crate::services::{
-    artifact_resolver, bridge_ctl, bridge_instances, device, payload, process,
-};
+use crate::services::{artifact_resolver, bridge_ctl, bridge_instances, device, process};
 use crate::state::AppState;
+
+const SUPERVISOR_START_DELAY: Duration = Duration::from_millis(300);
+const SUPERVISOR_POLL_INTERVAL: Duration = Duration::from_secs(2);
+const STATUS_TIMEOUT: Duration = Duration::from_millis(180);
+const WAIT_STATUS_TIMEOUT: Duration = Duration::from_millis(150);
+const WAIT_READY_TIMEOUT: Duration = Duration::from_secs(4);
+const WAIT_READY_POLL_INTERVAL: Duration = Duration::from_millis(140);
 
 /// Ensure oc-bridge instances are running for the current user session.
 pub fn spawn_bridge_supervisor(app: tauri::AppHandle) {
@@ -21,48 +29,73 @@ pub fn spawn_bridge_supervisor(app: tauri::AppHandle) {
 }
 
 async fn supervisor_loop(app: tauri::AppHandle) {
-    tokio::time::sleep(Duration::from_millis(300)).await;
+    tokio::time::sleep(SUPERVISOR_START_DELAY).await;
 
     let mut cleaned_bridge_autostart = false;
 
     loop {
         let layout = app.state::<AppState>().layout_get();
-        let settings = app.state::<AppState>().settings_get();
-        let exe = artifact_resolver::resolve_oc_bridge_exe(&settings, &layout)
-            .unwrap_or_else(|_| payload::oc_bridge_path(&layout));
-
-        if !exe.exists() {
-            tokio::time::sleep(Duration::from_secs(3)).await;
-            continue;
-        }
 
         if !cleaned_bridge_autostart {
             let _ = cleanup_legacy_bridge_autostart(&layout).await;
             cleaned_bridge_autostart = true;
         }
 
-        let bindings = ensure_bridge_instances(&app, &layout, &settings).await;
-        for binding in bindings.instances.iter().filter(|binding| binding.enabled) {
-            reconcile_bridge_instance(&settings, &layout, binding).await;
-        }
+        let bindings = bridge_instances_for_cycle(&app, &layout).await;
+        ensure_enabled_instances_running(&layout, &bindings).await;
 
-        tokio::time::sleep(Duration::from_secs(2)).await;
+        tokio::time::sleep(SUPERVISOR_POLL_INTERVAL).await;
     }
 }
 
-async fn ensure_bridge_instances(
+async fn bridge_instances_for_cycle(
     app: &tauri::AppHandle,
     layout: &PayloadLayout,
-    settings: &ms_manager_core::Settings,
 ) -> BridgeInstancesState {
     let bindings = app.state::<AppState>().bridge_instances_get();
     if !bindings.instances.is_empty() {
         return bindings;
     }
 
-    let device_status = device::device_status(settings, layout).await;
-    let serial_targets = device_status
-        .targets
+    auto_bind_single_serial_target(app, layout, &bindings).await
+}
+
+async fn auto_bind_single_serial_target(
+    app: &tauri::AppHandle,
+    layout: &PayloadLayout,
+    bindings: &BridgeInstancesState,
+) -> BridgeInstancesState {
+    let device_status = device::device_status(layout).await;
+    let Some((controller_serial, controller_vid, controller_pid)) =
+        single_serial_target(&device_status.targets)
+    else {
+        return bindings.clone();
+    };
+
+    let Ok(binding) = bridge_instances::build_binding(
+        bindings,
+        BridgeApp::Bitwig,
+        BridgeMode::Hardware,
+        &controller_serial,
+        controller_vid,
+        controller_pid,
+        FirmwareTarget::Bitwig,
+        ArtifactSource::Installed,
+        Some(ms_manager_core::Channel::Stable),
+        None,
+    ) else {
+        return bindings.clone();
+    };
+
+    app.state::<AppState>()
+        .bridge_instance_upsert(binding)
+        .unwrap_or_else(|_| bindings.clone())
+}
+
+fn single_serial_target(
+    targets: &[crate::models::DeviceTarget],
+) -> Option<(String, u32, u32)> {
+    let mut serial_targets = targets
         .iter()
         .filter(|target| matches!(target.kind, DeviceTargetKind::Serial))
         .filter_map(|target| {
@@ -71,41 +104,29 @@ async fn ensure_bridge_instances(
                 return None;
             }
             Some((serial.to_string(), target.vid, target.pid))
-        })
-        .collect::<Vec<_>>();
+        });
 
-    if serial_targets.len() != 1 {
-        return bindings;
+    let target = serial_targets.next()?;
+    if serial_targets.next().is_some() {
+        return None;
     }
 
-    let (controller_serial, controller_vid, controller_pid) = &serial_targets[0];
-    let Ok(binding) = bridge_instances::build_binding(
-        &bindings,
-        BridgeApp::Bitwig,
-        BridgeMode::Hardware,
-        controller_serial,
-        *controller_vid,
-        *controller_pid,
-    ) else {
-        return bindings;
-    };
-
-    app.state::<AppState>()
-        .bridge_instance_upsert(binding)
-        .unwrap_or_else(|_| bindings)
+    Some(target)
 }
 
-async fn reconcile_bridge_instance(
-    settings: &ms_manager_core::Settings,
-    layout: &PayloadLayout,
-    binding: &BridgeInstanceBinding,
-) {
-    if bridge_instance_ready(binding, Duration::from_millis(180)).await {
+async fn ensure_enabled_instances_running(layout: &PayloadLayout, bindings: &BridgeInstancesState) {
+    for binding in bindings.instances.iter().filter(|binding| binding.enabled) {
+        ensure_bridge_instance_running(layout, binding).await;
+    }
+}
+
+async fn ensure_bridge_instance_running(layout: &PayloadLayout, binding: &BridgeInstanceBinding) {
+    if bridge_instance_ready(binding, STATUS_TIMEOUT).await {
         return;
     }
 
-    let _ = bridge_spawn_daemon(settings, layout, binding).await;
-    let _ = bridge_wait_ready(binding, Duration::from_secs(4)).await;
+    let _ = bridge_spawn_daemon(layout, binding).await;
+    let _ = bridge_wait_ready(binding, WAIT_READY_TIMEOUT).await;
 }
 
 async fn bridge_instance_ready(binding: &BridgeInstanceBinding, timeout: Duration) -> bool {
@@ -281,12 +302,8 @@ async fn cleanup_windows_wrapper_files() {
     let _ = tokio::fs::remove_file(bat).await;
 }
 
-async fn bridge_spawn_daemon(
-    settings: &ms_manager_core::Settings,
-    layout: &PayloadLayout,
-    binding: &BridgeInstanceBinding,
-) -> Result<(), ()> {
-    let exe = artifact_resolver::resolve_oc_bridge_exe(settings, layout).map_err(|_| ())?;
+async fn bridge_spawn_daemon(layout: &PayloadLayout, binding: &BridgeInstanceBinding) -> Result<(), ()> {
+    let exe = artifact_resolver::resolve_oc_bridge_exe_for_binding(layout, binding).map_err(|_| ())?;
 
     let mut cmd = Command::new(exe);
     process::no_console_window(&mut cmd);
@@ -317,7 +334,7 @@ fn daemon_args(binding: &BridgeInstanceBinding) -> Vec<String> {
 async fn bridge_wait_ready(binding: &BridgeInstanceBinding, timeout: Duration) -> bool {
     let deadline = tokio::time::Instant::now() + timeout;
     loop {
-        if bridge_instance_ready(binding, Duration::from_millis(150)).await {
+        if bridge_instance_ready(binding, WAIT_STATUS_TIMEOUT).await {
             return true;
         }
 
@@ -325,22 +342,29 @@ async fn bridge_wait_ready(binding: &BridgeInstanceBinding, timeout: Duration) -
             return false;
         }
 
-        tokio::time::sleep(Duration::from_millis(140)).await;
+        tokio::time::sleep(WAIT_READY_POLL_INTERVAL).await;
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::DeviceTarget;
+    use ms_manager_core::Channel;
 
     fn binding() -> BridgeInstanceBinding {
         BridgeInstanceBinding {
             instance_id: "bitwig-hardware-17081760".to_string(),
+            display_name: None,
             app: BridgeApp::Bitwig,
             mode: BridgeMode::Hardware,
             controller_serial: "17081760".to_string(),
             controller_vid: 0x16C0,
             controller_pid: 0x0489,
+            target: FirmwareTarget::Bitwig,
+            artifact_source: ArtifactSource::Installed,
+            installed_channel: Some(Channel::Stable),
+            installed_pinned_tag: None,
             host_udp_port: 9000,
             control_port: 7999,
             log_broadcast_port: 9999,
@@ -367,5 +391,27 @@ mod tests {
                 "9999",
             ]
         );
+    }
+
+    #[test]
+    fn single_serial_target_requires_exactly_one_serial_device() {
+        let target = DeviceTarget {
+            index: 0,
+            target_id: "serial:COM6".to_string(),
+            kind: DeviceTargetKind::Serial,
+            port_name: Some("COM6".to_string()),
+            path: Some("COM6".to_string()),
+            serial_number: Some("17081760".to_string()),
+            manufacturer: Some("MIDI Studio".to_string()),
+            product: Some("MIDI Studio".to_string()),
+            vid: 0x16C0,
+            pid: 0x0489,
+        };
+
+        assert_eq!(
+            single_serial_target(&[target.clone()]),
+            Some(("17081760".to_string(), 0x16C0, 0x0489))
+        );
+        assert_eq!(single_serial_target(&[target.clone(), target]), None);
     }
 }

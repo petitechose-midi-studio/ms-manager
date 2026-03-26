@@ -3,8 +3,8 @@ use std::sync::Mutex;
 
 use ms_manager_core::{
     ArtifactSource, BridgeInstanceBinding, BridgeInstancesState, Channel, ControllerState,
-    InstallState, LastFlashed, Settings, BRIDGE_INSTANCES_SCHEMA, CONTROLLER_STATE_SCHEMA,
-    INSTALL_STATE_SCHEMA, SETTINGS_SCHEMA,
+    FirmwareTarget, InstallState, LastFlashed, Settings, BRIDGE_INSTANCES_SCHEMA,
+    CONTROLLER_STATE_SCHEMA, INSTALL_STATE_SCHEMA, SETTINGS_SCHEMA,
 };
 use reqwest::Client;
 use tauri::path::BaseDirectory;
@@ -32,18 +32,19 @@ impl AppState {
             .map_err(|e| ApiError::new("io_path_failed", e.to_string()))?;
 
         let settings = load_settings(&settings_path)?;
-
         let layout = PayloadLayout::resolve(settings.payload_root_override.as_deref())?;
-
         let install_state = load_install_state(&layout, &layout.install_state_file())?;
-        let controller_state = load_controller_state(&layout.controller_state_file())?;
         let bridge_instances = load_bridge_instances_state(&layout.bridge_instances_file())?;
+        let controller_state_raw = load_controller_state(&layout.controller_state_file())?;
+        let controller_state = migrate_controller_state(controller_state_raw.clone(), &bridge_instances);
+        if controller_state != controller_state_raw {
+            let _ = write_json_atomic(&layout.controller_state_file(), &controller_state);
+        }
 
         let http = Client::builder()
             .user_agent("ms-manager")
             .build()
             .map_err(|e| ApiError::new("http_client_failed", e.to_string()))?;
-
         Ok(Self {
             http,
             layout: Mutex::new(layout),
@@ -66,81 +67,16 @@ impl AppState {
     pub fn payload_state_reload(&self) -> ApiResult<()> {
         let layout = self.layout_get();
         let install_state = load_install_state(&layout, &layout.install_state_file())?;
-        let controller_state = load_controller_state(&layout.controller_state_file())?;
         let bridge_instances = load_bridge_instances_state(&layout.bridge_instances_file())?;
+        let controller_state_raw = load_controller_state(&layout.controller_state_file())?;
+        let controller_state = migrate_controller_state(controller_state_raw.clone(), &bridge_instances);
+        if controller_state != controller_state_raw {
+            let _ = write_json_atomic(&layout.controller_state_file(), &controller_state);
+        }
         *self.install_state.lock().unwrap() = install_state;
-        *self.controller_state.lock().unwrap() = controller_state;
         *self.bridge_instances.lock().unwrap() = bridge_instances;
+        *self.controller_state.lock().unwrap() = controller_state;
         Ok(())
-    }
-
-    pub fn settings_get(&self) -> Settings {
-        self.settings.lock().unwrap().clone()
-    }
-
-    pub fn settings_set_channel(&self, channel: Channel) -> ApiResult<Settings> {
-        let mut s = self.settings.lock().unwrap();
-        if s.channel != channel {
-            s.channel = channel;
-            s.pinned_tag = None;
-        }
-        if s.schema != SETTINGS_SCHEMA {
-            s.schema = SETTINGS_SCHEMA;
-        }
-
-        write_json_atomic(&self.settings_path, &*s)?;
-        Ok(s.clone())
-    }
-
-    pub fn settings_set_profile(&self, profile: String) -> ApiResult<Settings> {
-        let profile = profile.trim().to_string();
-        if profile.is_empty() {
-            return Err(ApiError::new("invalid_profile", "profile cannot be empty"));
-        }
-
-        let mut s = self.settings.lock().unwrap();
-        if s.profile != profile {
-            s.profile = profile;
-        }
-        if s.schema != SETTINGS_SCHEMA {
-            s.schema = SETTINGS_SCHEMA;
-        }
-
-        write_json_atomic(&self.settings_path, &*s)?;
-        Ok(s.clone())
-    }
-
-    pub fn settings_set_pinned_tag(&self, pinned_tag: Option<String>) -> ApiResult<Settings> {
-        let pinned_tag = pinned_tag
-            .map(|t| t.trim().to_string())
-            .filter(|t| !t.is_empty());
-
-        let mut s = self.settings.lock().unwrap();
-        if s.pinned_tag != pinned_tag {
-            s.pinned_tag = pinned_tag;
-        }
-        if s.schema != SETTINGS_SCHEMA {
-            s.schema = SETTINGS_SCHEMA;
-        }
-
-        write_json_atomic(&self.settings_path, &*s)?;
-        Ok(s.clone())
-    }
-
-    pub fn settings_set_artifact_source(
-        &self,
-        artifact_source: ArtifactSource,
-    ) -> ApiResult<Settings> {
-        let mut s = self.settings.lock().unwrap();
-        if s.artifact_source != artifact_source {
-            s.artifact_source = artifact_source;
-        }
-        if s.schema != SETTINGS_SCHEMA {
-            s.schema = SETTINGS_SCHEMA;
-        }
-
-        write_json_atomic(&self.settings_path, &*s)?;
-        Ok(s.clone())
     }
 
     pub fn settings_set_payload_root_override(
@@ -189,14 +125,19 @@ impl AppState {
         Ok(next)
     }
 
-    pub fn controller_last_flashed(&self) -> Option<LastFlashed> {
-        self.controller_state.lock().unwrap().last_flashed.clone()
+    pub fn controller_state_get(&self) -> ControllerState {
+        self.controller_state.lock().unwrap().clone()
     }
 
-    pub fn controller_last_flashed_set(&self, next: LastFlashed) -> ApiResult<ControllerState> {
+    pub fn controller_last_flashed_set(
+        &self,
+        instance_id: &str,
+        next: LastFlashed,
+    ) -> ApiResult<ControllerState> {
         let mut s = self.controller_state.lock().unwrap();
         s.schema = CONTROLLER_STATE_SCHEMA;
-        s.last_flashed = Some(next);
+        s.set_last_flashed_for_instance(instance_id.to_string(), next);
+        s.last_flashed = None;
         let path = self.layout_get().controller_state_file();
         write_json_atomic(&path, &*s)?;
         Ok(s.clone())
@@ -236,6 +177,103 @@ impl AppState {
     pub fn bridge_instance_remove(&self, instance_id: &str) -> ApiResult<BridgeInstancesState> {
         let mut state = self.bridge_instances_get();
         state.instances.retain(|instance| instance.instance_id != instance_id);
+        self.bridge_instances_set(state)
+    }
+
+    pub fn bridge_instance_set_target(
+        &self,
+        instance_id: &str,
+        target: FirmwareTarget,
+    ) -> ApiResult<BridgeInstancesState> {
+        self.update_bridge_instance(instance_id, |instance| {
+            instance.target = target;
+            Ok(())
+        })
+    }
+
+    pub fn bridge_instance_set_artifact_source(
+        &self,
+        instance_id: &str,
+        artifact_source: ArtifactSource,
+    ) -> ApiResult<BridgeInstancesState> {
+        self.update_bridge_instance(instance_id, |instance| {
+            instance.artifact_source = artifact_source;
+            match artifact_source {
+                ArtifactSource::Installed => {
+                    if instance.installed_channel.is_none() {
+                        instance.installed_channel = Some(Channel::Stable);
+                    }
+                }
+                ArtifactSource::Workspace => {
+                    instance.installed_channel = None;
+                    instance.installed_pinned_tag = None;
+                }
+            }
+            Ok(())
+        })
+    }
+
+    pub fn bridge_instance_set_installed_release(
+        &self,
+        instance_id: &str,
+        channel: Channel,
+        pinned_tag: Option<String>,
+    ) -> ApiResult<BridgeInstancesState> {
+        self.update_bridge_instance(instance_id, |instance| {
+            instance.artifact_source = ArtifactSource::Installed;
+            instance.installed_channel = Some(channel);
+            instance.installed_pinned_tag = pinned_tag
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty());
+            Ok(())
+        })
+    }
+
+    pub fn bridge_instance_set_display_name(
+        &self,
+        instance_id: &str,
+        display_name: Option<String>,
+    ) -> ApiResult<BridgeInstancesState> {
+        self.update_bridge_instance(instance_id, |instance| {
+            instance.display_name = display_name
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty());
+            Ok(())
+        })
+    }
+
+    pub fn bridge_instance_set_enabled(
+        &self,
+        instance_id: &str,
+        enabled: bool,
+    ) -> ApiResult<BridgeInstancesState> {
+        self.update_bridge_instance(instance_id, |instance| {
+            instance.enabled = enabled;
+            Ok(())
+        })
+    }
+
+    fn update_bridge_instance<F>(
+        &self,
+        instance_id: &str,
+        update: F,
+    ) -> ApiResult<BridgeInstancesState>
+    where
+        F: FnOnce(&mut BridgeInstanceBinding) -> ApiResult<()>,
+    {
+        let mut state = self.bridge_instances_get();
+        let Some(instance) = state
+            .instances
+            .iter_mut()
+            .find(|instance| instance.instance_id == instance_id)
+        else {
+            return Err(ApiError::new(
+                "bridge_instance_not_found",
+                format!("unknown instance_id: {instance_id}"),
+            ));
+        };
+
+        update(instance)?;
         self.bridge_instances_set(state)
     }
 }
@@ -322,4 +360,24 @@ fn load_bridge_instances_state(path: &Path) -> ApiResult<BridgeInstancesState> {
         return Ok(BridgeInstancesState::default());
     }
     Ok(s)
+}
+
+fn migrate_controller_state(
+    mut controller_state: ControllerState,
+    bridge_instances: &BridgeInstancesState,
+) -> ControllerState {
+    if controller_state.last_flashed_by_instance.is_empty()
+        && controller_state.last_flashed.is_some()
+        && bridge_instances.instances.len() == 1
+    {
+        if let Some(last) = controller_state.last_flashed.clone() {
+            controller_state.set_last_flashed_for_instance(
+                bridge_instances.instances[0].instance_id.clone(),
+                last,
+            );
+        }
+    }
+
+    controller_state.last_flashed = None;
+    controller_state
 }

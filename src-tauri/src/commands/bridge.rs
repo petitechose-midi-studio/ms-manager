@@ -1,6 +1,7 @@
 use tauri::State;
 
 use crate::api_error::{ApiError, ApiResult};
+use crate::commands::payload::open_path_inner;
 use crate::models::BridgeStatus;
 use crate::services::bridge_status;
 use crate::state::AppState;
@@ -8,42 +9,23 @@ use crate::state::AppState;
 #[tauri::command]
 pub async fn bridge_status_get(state: State<'_, AppState>) -> ApiResult<BridgeStatus> {
     let layout = state.layout_get();
-    let settings = state.settings_get();
-    Ok(bridge_status::bridge_status(&settings, &layout, &state.bridge_instances_get()).await)
+    let installed = state.install_state_get();
+    Ok(
+        bridge_status::bridge_status(
+            &layout,
+            installed.as_ref(),
+            &state.bridge_instances_get(),
+            &state.controller_state_get(),
+        )
+        .await,
+    )
 }
 
 #[tauri::command]
 pub fn bridge_log_open() -> ApiResult<()> {
     let dir = oc_bridge_config_dir()?;
-    let target = dir;
-
-    let _ = std::fs::create_dir_all(&target);
-
-    let mut cmd = if cfg!(windows) {
-        // Select the file in Explorer when possible.
-        if target.is_file() {
-            let mut c = std::process::Command::new("explorer");
-            c.arg(format!("/select,{}", target.display()));
-            c
-        } else {
-            let mut c = std::process::Command::new("explorer");
-            c.arg(&target);
-            c
-        }
-    } else if cfg!(target_os = "macos") {
-        let mut c = std::process::Command::new("open");
-        c.arg(&target);
-        c
-    } else {
-        let mut c = std::process::Command::new("xdg-open");
-        c.arg(&target);
-        c
-    };
-
-    cmd.spawn()
-        .map_err(|e| ApiError::new("open_failed", format!("open {}: {e}", target.display())))?;
-
-    Ok(())
+    let _ = std::fs::create_dir_all(&dir);
+    open_path_inner(&dir)
 }
 
 fn oc_bridge_config_dir() -> ApiResult<std::path::PathBuf> {

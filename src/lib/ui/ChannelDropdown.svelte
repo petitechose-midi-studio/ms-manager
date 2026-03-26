@@ -1,27 +1,25 @@
 <script lang="ts">
   import type { Channel } from "$lib/api/types";
-  import LabeledSelect, { type SelectOption } from "$lib/ui/LabeledSelect.svelte";
+  import ChoiceDropdown from "$lib/ui/ChoiceDropdown.svelte";
 
   export let value: Channel;
   export let disabled = false;
   export let onChange: (next: Channel) => void;
 
-  const options: SelectOption[] = [
-    { value: "stable", label: "stable" },
-    { value: "beta", label: "beta" },
-    { value: "nightly", label: "nightly" },
-  ];
-
-  function toChannel(v: string): Channel {
-    if (v === "stable" || v === "beta" || v === "nightly") return v;
+  function toChannel(value: string): Channel {
+    if (value === "stable" || value === "beta" || value === "nightly") return value;
     return "stable";
   }
 </script>
 
-<LabeledSelect
+<ChoiceDropdown
   label="Channel"
-  value={value}
+  {value}
   {disabled}
-  {options}
-  onChange={(v) => onChange(toChannel(v))}
-/> 
+  options={[
+    { value: "stable", label: "Stable" },
+    { value: "beta", label: "Beta" },
+    { value: "nightly", label: "Nightly" },
+  ]}
+  onChange={(next) => onChange(toChannel(next))}
+/>

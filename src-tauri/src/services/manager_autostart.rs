@@ -1,6 +1,9 @@
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use std::path::PathBuf;
 
+#[cfg(target_os = "windows")]
+use crate::services::process;
+
 /// Per-user autostart management for ms-manager itself.
 ///
 /// Design goal: the end-user should never need to manage oc-bridge directly.
@@ -17,9 +20,9 @@ const AUTOSTART_ID: &str = "MidiStudioManager";
 pub fn is_installed() -> bool {
     #[cfg(target_os = "windows")]
     {
-        let out = std::process::Command::new("reg")
-            .args(["query", RUN_KEY, "/v", AUTOSTART_ID])
-            .output();
+        let mut cmd = std::process::Command::new("reg");
+        process::no_console_window_std(&mut cmd);
+        let out = cmd.args(["query", RUN_KEY, "/v", AUTOSTART_ID]).output();
         return out.is_ok_and(|o| o.status.success());
     }
 
@@ -45,7 +48,9 @@ pub fn install() -> std::io::Result<()> {
     #[cfg(target_os = "windows")]
     {
         let data = format!("{} --background", quote_exec(&exe));
-        let out = std::process::Command::new("reg")
+        let mut cmd = std::process::Command::new("reg");
+        process::no_console_window_std(&mut cmd);
+        let out = cmd
             .args([
                 "add",
                 RUN_KEY,
@@ -95,47 +100,6 @@ pub fn install() -> std::io::Result<()> {
     #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
     {
         let _ = exe;
-        Err(std::io::Error::other("unsupported platform"))
-    }
-}
-
-pub fn uninstall() -> std::io::Result<()> {
-    #[cfg(target_os = "windows")]
-    {
-        if !is_installed() {
-            return Ok(());
-        }
-        let out = std::process::Command::new("reg")
-            .args(["delete", RUN_KEY, "/v", AUTOSTART_ID, "/f"])
-            .output()?;
-        if out.status.success() {
-            return Ok(());
-        }
-        return Err(std::io::Error::other(
-            String::from_utf8_lossy(&out.stderr).to_string(),
-        ));
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        let path = plist_path();
-        if path.exists() {
-            let _ = std::fs::remove_file(path);
-        }
-        return Ok(());
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        let path = desktop_path();
-        if path.exists() {
-            let _ = std::fs::remove_file(path);
-        }
-        return Ok(());
-    }
-
-    #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
-    {
         Err(std::io::Error::other("unsupported platform"))
     }
 }
