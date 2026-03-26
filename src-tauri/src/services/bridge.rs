@@ -1,19 +1,19 @@
 use std::process::Stdio;
 use std::time::Duration;
 
+use ms_manager_core::{BridgeApp, BridgeInstanceBinding, BridgeInstancesState, BridgeMode};
 use tokio::process::Command;
 
 use tauri::Manager;
 
 use crate::layout::PayloadLayout;
-use crate::services::{bridge_ctl, bridge_process, payload, process};
+use crate::models::DeviceTargetKind;
+use crate::services::{
+    artifact_resolver, bridge_ctl, bridge_instances, device, payload, process,
+};
 use crate::state::AppState;
 
-/// Ensure oc-bridge is running for the current user session.
-///
-/// This is intentionally best-effort: if the host bundle is not installed, or if
-/// the bridge cannot be started, the app should remain usable (firmware flashing,
-/// installs, etc.).
+/// Ensure oc-bridge instances are running for the current user session.
 pub fn spawn_bridge_supervisor(app: tauri::AppHandle) {
     tauri::async_runtime::spawn(async move {
         supervisor_loop(app).await;
@@ -21,60 +21,114 @@ pub fn spawn_bridge_supervisor(app: tauri::AppHandle) {
 }
 
 async fn supervisor_loop(app: tauri::AppHandle) {
-    // Give the app a moment to finish bootstrapping.
     tokio::time::sleep(Duration::from_millis(300)).await;
 
     let mut cleaned_bridge_autostart = false;
 
     loop {
-        // Don't hold any app state reference across await.
         let layout = app.state::<AppState>().layout_get();
-        let exe = payload::oc_bridge_path(&layout);
+        let settings = app.state::<AppState>().settings_get();
+        let exe = artifact_resolver::resolve_oc_bridge_exe(&settings, &layout)
+            .unwrap_or_else(|_| payload::oc_bridge_path(&layout));
 
-        // If the host bundle is not installed, there is no bridge to manage.
         if !exe.exists() {
             tokio::time::sleep(Duration::from_secs(3)).await;
             continue;
         }
 
-        // Cleanup legacy oc-bridge autostarts to avoid collisions.
         if !cleaned_bridge_autostart {
             let _ = cleanup_legacy_bridge_autostart(&layout).await;
             cleaned_bridge_autostart = true;
         }
 
-        // Health check: if the daemon doesn't respond, try to start it.
-        if !bridge_ctl::ping(Duration::from_millis(150)).await {
-            let _ = bridge_spawn_daemon(&layout).await;
-            let ready = bridge_wait_ready(Duration::from_secs(4)).await;
-
-            // If the daemon still doesn't come up, reconcile:
-            // - oc-bridge might be stuck or running with an incompatible state
-            // - kill only the daemon process for the current payload exe
-            if !ready {
-                let killed = bridge_process::kill_oc_bridge_daemons(&exe);
-                if killed == 0 {
-                    // If a legacy daemon (different payload path) is running, the instance lock
-                    // can prevent startup. As a strict cleanup step, kill any oc-bridge daemon.
-                    let _ = bridge_process::kill_all_oc_bridge_daemons();
-                }
-
-                tokio::time::sleep(Duration::from_millis(400)).await;
-                let _ = bridge_spawn_daemon(&layout).await;
-                let _ = bridge_wait_ready(Duration::from_secs(4)).await;
-            }
+        let bindings = ensure_bridge_instances(&app, &layout, &settings).await;
+        for binding in bindings.instances.iter().filter(|binding| binding.enabled) {
+            reconcile_bridge_instance(&settings, &layout, binding).await;
         }
 
         tokio::time::sleep(Duration::from_secs(2)).await;
     }
 }
 
+async fn ensure_bridge_instances(
+    app: &tauri::AppHandle,
+    layout: &PayloadLayout,
+    settings: &ms_manager_core::Settings,
+) -> BridgeInstancesState {
+    let bindings = app.state::<AppState>().bridge_instances_get();
+    if !bindings.instances.is_empty() {
+        return bindings;
+    }
+
+    let device_status = device::device_status(settings, layout).await;
+    let serial_targets = device_status
+        .targets
+        .iter()
+        .filter(|target| matches!(target.kind, DeviceTargetKind::Serial))
+        .filter_map(|target| {
+            let serial = target.serial_number.as_deref()?.trim();
+            if serial.is_empty() {
+                return None;
+            }
+            Some((serial.to_string(), target.vid, target.pid))
+        })
+        .collect::<Vec<_>>();
+
+    if serial_targets.len() != 1 {
+        return bindings;
+    }
+
+    let (controller_serial, controller_vid, controller_pid) = &serial_targets[0];
+    let Ok(binding) = bridge_instances::build_binding(
+        &bindings,
+        BridgeApp::Bitwig,
+        BridgeMode::Hardware,
+        controller_serial,
+        *controller_vid,
+        *controller_pid,
+    ) else {
+        return bindings;
+    };
+
+    app.state::<AppState>()
+        .bridge_instance_upsert(binding)
+        .unwrap_or_else(|_| bindings)
+}
+
+async fn reconcile_bridge_instance(
+    settings: &ms_manager_core::Settings,
+    layout: &PayloadLayout,
+    binding: &BridgeInstanceBinding,
+) {
+    if bridge_instance_ready(binding, Duration::from_millis(180)).await {
+        return;
+    }
+
+    let _ = bridge_spawn_daemon(settings, layout, binding).await;
+    let _ = bridge_wait_ready(binding, Duration::from_secs(4)).await;
+}
+
+async fn bridge_instance_ready(binding: &BridgeInstanceBinding, timeout: Duration) -> bool {
+    let Ok(v) = bridge_ctl::send_command(binding.control_port, "status", timeout).await else {
+        return false;
+    };
+
+    let ok = v.get("ok").and_then(|value| value.as_bool()).unwrap_or(false);
+    let instance_id = v
+        .get("instance_id")
+        .and_then(|value| value.as_str())
+        .unwrap_or_default();
+    let controller_serial = v
+        .get("controller_serial")
+        .and_then(|value| value.as_str())
+        .unwrap_or_default();
+
+    ok && instance_id == binding.instance_id && controller_serial == binding.controller_serial
+}
+
 async fn cleanup_legacy_bridge_autostart(layout: &PayloadLayout) -> Result<(), ()> {
-    // Best effort: remove per-user autostart installed by oc-bridge (legacy).
     let _ = cleanup_oc_bridge_autostart_artifacts(layout).await;
 
-    // Best effort: disable the legacy Task Scheduler entry (older builds).
-    // This may require admin (Access denied). Ignore failures.
     #[cfg(windows)]
     {
         let mut cmd = Command::new("schtasks");
@@ -107,7 +161,6 @@ async fn cleanup_oc_bridge_autostart_artifacts(_layout: &PayloadLayout) -> Resul
         return Ok(());
     }
 
-    // Linux: oc-bridge used systemd user unit "open-control-bridge".
     #[cfg(target_os = "linux")]
     {
         let home = std::env::var_os("HOME").unwrap_or_default();
@@ -142,7 +195,6 @@ async fn cleanup_oc_bridge_autostart_artifacts(_layout: &PayloadLayout) -> Resul
         return Ok(());
     }
 
-    // macOS: oc-bridge used LaunchAgent "com.opencontrol.oc-bridge".
     #[cfg(target_os = "macos")]
     {
         let home = std::env::var_os("HOME").unwrap_or_default();
@@ -188,15 +240,10 @@ async fn cleanup_windows_run_key_values() {
     let stdout = String::from_utf8_lossy(&out.stdout);
     for line in stdout.lines() {
         let l = line.trim_start();
-        if l.is_empty() {
-            continue;
-        }
-        // Skip the key header line.
-        if l.starts_with("HKEY_") {
+        if l.is_empty() || l.starts_with("HKEY_") {
             continue;
         }
 
-        // Parse: <name> <type> <data...>
         let mut it = l.split_whitespace();
         let Some(name) = it.next() else {
             continue;
@@ -234,19 +281,16 @@ async fn cleanup_windows_wrapper_files() {
     let _ = tokio::fs::remove_file(bat).await;
 }
 
-async fn bridge_spawn_daemon(layout: &PayloadLayout) -> Result<(), ()> {
-    let exe = payload::oc_bridge_path(layout);
-    if !exe.exists() {
-        return Err(());
-    }
+async fn bridge_spawn_daemon(
+    settings: &ms_manager_core::Settings,
+    layout: &PayloadLayout,
+    binding: &BridgeInstanceBinding,
+) -> Result<(), ()> {
+    let exe = artifact_resolver::resolve_oc_bridge_exe(settings, layout).map_err(|_| ())?;
 
     let mut cmd = Command::new(exe);
     process::no_console_window(&mut cmd);
-    cmd.arg("--daemon")
-        .arg("--daemon-control-port")
-        .arg(bridge_ctl::DEFAULT_CONTROL_PORT.to_string())
-        .arg("--daemon-log-broadcast-port")
-        .arg("9999")
+    cmd.args(daemon_args(binding))
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
@@ -254,10 +298,26 @@ async fn bridge_spawn_daemon(layout: &PayloadLayout) -> Result<(), ()> {
     cmd.spawn().map(|_| ()).map_err(|_| ())
 }
 
-async fn bridge_wait_ready(timeout: Duration) -> bool {
+fn daemon_args(binding: &BridgeInstanceBinding) -> Vec<String> {
+    vec![
+        "--daemon".to_string(),
+        "--instance-id".to_string(),
+        binding.instance_id.clone(),
+        "--serial-number".to_string(),
+        binding.controller_serial.clone(),
+        "--udp-port".to_string(),
+        binding.host_udp_port.to_string(),
+        "--daemon-control-port".to_string(),
+        binding.control_port.to_string(),
+        "--daemon-log-broadcast-port".to_string(),
+        binding.log_broadcast_port.to_string(),
+    ]
+}
+
+async fn bridge_wait_ready(binding: &BridgeInstanceBinding, timeout: Duration) -> bool {
     let deadline = tokio::time::Instant::now() + timeout;
     loop {
-        if bridge_ctl::ping(Duration::from_millis(150)).await {
+        if bridge_instance_ready(binding, Duration::from_millis(150)).await {
             return true;
         }
 
@@ -266,5 +326,46 @@ async fn bridge_wait_ready(timeout: Duration) -> bool {
         }
 
         tokio::time::sleep(Duration::from_millis(140)).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn binding() -> BridgeInstanceBinding {
+        BridgeInstanceBinding {
+            instance_id: "bitwig-hardware-17081760".to_string(),
+            app: BridgeApp::Bitwig,
+            mode: BridgeMode::Hardware,
+            controller_serial: "17081760".to_string(),
+            controller_vid: 0x16C0,
+            controller_pid: 0x0489,
+            host_udp_port: 9000,
+            control_port: 7999,
+            log_broadcast_port: 9999,
+            enabled: true,
+        }
+    }
+
+    #[test]
+    fn daemon_args_include_identity_and_ports() {
+        let args = daemon_args(&binding());
+        assert_eq!(
+            args,
+            vec![
+                "--daemon",
+                "--instance-id",
+                "bitwig-hardware-17081760",
+                "--serial-number",
+                "17081760",
+                "--udp-port",
+                "9000",
+                "--daemon-control-port",
+                "7999",
+                "--daemon-log-broadcast-port",
+                "9999",
+            ]
+        );
     }
 }

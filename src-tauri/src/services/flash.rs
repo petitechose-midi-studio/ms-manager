@@ -1,54 +1,53 @@
-use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use tokio::io::{AsyncBufReadExt, BufReader};
 
-use ms_manager_core::{InstallState, LastFlashed};
-use tauri::Emitter;
+use ms_manager_core::{InstallState, LastFlashed, Settings};
+use tauri::{Emitter, Manager};
 
 use crate::api_error::{ApiError, ApiResult};
 use crate::layout::PayloadLayout;
 use crate::models::FlashEvent;
-use crate::services::bridge_ctl;
+use crate::services::{artifact_resolver, bridge_ctl};
 use crate::services::process;
+use crate::state::AppState;
 
 const FLASH_EVENT: &str = "ms-manager://flash";
 
 pub async fn flash_firmware(
     app: &tauri::AppHandle,
     layout: &PayloadLayout,
-    installed: &InstallState,
+    settings: &Settings,
+    installed: Option<&InstallState>,
     profile: &str,
 ) -> ApiResult<LastFlashed> {
     if profile.trim().is_empty() {
         return Err(ApiError::new("invalid_profile", "profile cannot be empty"));
     }
 
-    let loader = loader_path(layout);
-    if !loader.exists() {
-        return Err(ApiError::new(
-            "loader_missing",
-            "midi-studio-loader not found (install the host bundle first)",
-        ));
-    }
-
-    let firmware = firmware_path_for_profile(layout, &installed.tag, profile)?;
+    let loader = artifact_resolver::resolve_loader_exe(&settings, layout)?;
+    let firmware = artifact_resolver::resolve_firmware_for_profile(
+        settings,
+        layout,
+        installed,
+        profile,
+    )?;
 
     // Best-effort: ask oc-bridge to release the serial port before flashing.
     // This keeps the UX smooth when the bridge is running in the background.
-    let _ = bridge_ctl::send_command(
-        bridge_ctl::DEFAULT_CONTROL_PORT,
-        "pause",
-        std::time::Duration::from_secs(2),
-    )
-    .await;
+    for control_port in bridge_control_ports(app) {
+        let _ = bridge_ctl::send_command(control_port, "pause", std::time::Duration::from_secs(2))
+            .await;
+    }
 
     let _ = app.emit(
         FLASH_EVENT,
         FlashEvent::Begin {
-            channel: installed.channel,
-            tag: installed.tag.clone(),
+            channel: installed.map(|v| v.channel).unwrap_or(settings.channel),
+            tag: installed
+                .map(|v| v.tag.clone())
+                .unwrap_or_else(|| "workspace".to_string()),
             profile: profile.to_string(),
         },
     );
@@ -110,12 +109,14 @@ pub async fn flash_firmware(
         .map_err(|e| ApiError::new("io_exec_failed", format!("wait flash: {e}")))?;
 
     // Best-effort: re-open serial after flashing.
-    let _ = bridge_ctl::send_command(
-        bridge_ctl::DEFAULT_CONTROL_PORT,
-        "resume",
-        std::time::Duration::from_millis(600),
-    )
-    .await;
+    for control_port in bridge_control_ports(app) {
+        let _ = bridge_ctl::send_command(
+            control_port,
+            "resume",
+            std::time::Duration::from_millis(600),
+        )
+        .await;
+    }
 
     let stderr = stderr_task.await.unwrap_or_default();
 
@@ -135,92 +136,32 @@ pub async fn flash_firmware(
     }
 
     Ok(LastFlashed {
-        channel: installed.channel,
-        tag: installed.tag.clone(),
+        channel: installed.map(|v| v.channel).unwrap_or(settings.channel),
+        tag: installed
+            .map(|v| v.tag.clone())
+            .unwrap_or_else(|| "workspace".to_string()),
         profile: profile.to_string(),
         flashed_at_ms: now_ms(),
     })
 }
 
-fn loader_path(layout: &PayloadLayout) -> PathBuf {
-    let bin = layout.current_dir().join("bin");
-    if cfg!(windows) {
-        bin.join("midi-studio-loader.exe")
-    } else {
-        bin.join("midi-studio-loader")
-    }
-}
-
-fn firmware_path_for_profile(
-    layout: &PayloadLayout,
-    tag: &str,
-    profile: &str,
-) -> ApiResult<PathBuf> {
-    let dir = layout.version_dir(tag).join("firmware");
-    if !dir.exists() {
-        return Err(ApiError::new(
-            "firmware_missing",
-            "firmware directory not found for installed version",
-        )
-        .with_details(serde_json::json!({"dir": dir.display().to_string()})));
-    }
-
-    let mut candidates = Vec::<PathBuf>::new();
-    let read = std::fs::read_dir(&dir)
-        .map_err(|e| ApiError::new("io_read_failed", format!("read dir {}: {e}", dir.display())))?;
-    for entry in read {
-        let entry = entry.map_err(|e| ApiError::new("io_read_failed", e.to_string()))?;
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()).unwrap_or("") != "hex" {
-            continue;
-        }
-        candidates.push(path);
-    }
-
-    let needle = profile.to_lowercase();
-    let mut matches = candidates
+fn bridge_control_ports(app: &tauri::AppHandle) -> Vec<u16> {
+    let mut ports = app
+        .state::<AppState>()
+        .bridge_instances_get()
+        .instances
         .into_iter()
-        .filter(|p| {
-            p.file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("")
-                .to_lowercase()
-                .contains(&needle)
-        })
+        .filter(|binding| binding.enabled)
+        .map(|binding| binding.control_port)
         .collect::<Vec<_>>();
 
-    if matches.len() == 1 {
-        return Ok(matches.remove(0));
+    if ports.is_empty() {
+        ports.push(bridge_ctl::DEFAULT_CONTROL_PORT);
     }
 
-    let available = list_firmware_files(&dir);
-    Err(ApiError::new(
-        "firmware_missing",
-        "firmware for selected profile is not installed (install that profile first)",
-    )
-    .with_details(serde_json::json!({
-        "profile": profile,
-        "dir": dir.display().to_string(),
-        "available": available,
-    })))
-}
-
-fn list_firmware_files(dir: &Path) -> Vec<String> {
-    let mut out = Vec::new();
-    let Ok(read) = std::fs::read_dir(dir) else {
-        return out;
-    };
-    for entry in read.flatten() {
-        let p = entry.path();
-        if p.extension().and_then(|e| e.to_str()).unwrap_or("") != "hex" {
-            continue;
-        }
-        if let Some(n) = p.file_name().and_then(|n| n.to_str()) {
-            out.push(n.to_string());
-        }
-    }
-    out.sort();
-    out
+    ports.sort_unstable();
+    ports.dedup();
+    ports
 }
 
 fn now_ms() -> u64 {

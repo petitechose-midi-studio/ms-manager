@@ -1920,7 +1920,7 @@ dependencies = [
 
 [[package]]
 name = "ms-manager"
-version = "0.1.2"
+version = "0.1.1"
 dependencies = [
  "ms-manager-core",
  "reqwest",

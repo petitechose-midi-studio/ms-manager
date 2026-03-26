@@ -1,6 +1,7 @@
 pub mod app_update;
 pub mod autostart;
 pub mod bridge;
+pub mod bridge_instances;
 pub mod device;
 pub mod distribution;
 pub mod flash;

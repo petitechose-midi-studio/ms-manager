@@ -1,4 +1,5 @@
 export type Channel = "stable" | "beta" | "nightly";
+export type ArtifactSource = "installed" | "workspace";
 
 export type Os = "windows" | "macos" | "linux";
 export type Arch = "x86_64" | "arm64";
@@ -14,6 +15,7 @@ export type Settings = {
   channel: Channel;
   profile: string;
   pinned_tag?: string | null;
+  artifact_source: ArtifactSource;
   payload_root_override?: string | null;
 };
 
@@ -44,6 +46,60 @@ export type BridgeStatus = {
   serial_open: boolean;
   version?: string | null;
   message?: string | null;
+  instances: BridgeInstanceStatus[];
+};
+
+export type BridgeInstanceStatus = {
+  instance_id: string;
+  configured_serial: string;
+  enabled: boolean;
+  running: boolean;
+  paused: boolean;
+  serial_open: boolean;
+  version?: string | null;
+  resolved_serial_port?: string | null;
+  connected_serial?: string | null;
+  message?: string | null;
+  host_udp_port: number;
+  control_port: number;
+  log_broadcast_port: number;
+};
+
+export type BridgeApp = "bitwig";
+export type BridgeMode = "hardware" | "native_sim" | "wasm_sim";
+
+export type BridgeInstanceBinding = {
+  instance_id: string;
+  app: BridgeApp;
+  mode: BridgeMode;
+  controller_serial: string;
+  controller_vid: number;
+  controller_pid: number;
+  host_udp_port: number;
+  control_port: number;
+  log_broadcast_port: number;
+  enabled: boolean;
+};
+
+export type BridgeInstancesState = {
+  schema: number;
+  instances: BridgeInstanceBinding[];
+};
+
+export type BridgeInstancesResponse = {
+  state: BridgeInstancesState;
+};
+
+export type BridgeInstanceBindRequest = {
+  app: BridgeApp;
+  mode: BridgeMode;
+  controller_serial: string;
+  controller_vid: number;
+  controller_pid: number;
+};
+
+export type BridgeInstanceBindingResponse = {
+  binding: BridgeInstanceBinding;
 };
 
 export type DeviceTargetKind = "serial" | "halfkay";
@@ -134,6 +190,9 @@ export type Status = {
   settings: Settings;
   installed: InstallState | null;
   host_installed: boolean;
+  artifact_source: ArtifactSource;
+  artifact_config_path: string | null;
+  artifact_message: string | null;
   platform: Platform;
   payload_root: string;
   device: DeviceStatus;

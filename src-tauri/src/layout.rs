@@ -49,6 +49,10 @@ impl PayloadLayout {
         self.state_dir().join("controller.json")
     }
 
+    pub fn bridge_instances_file(&self) -> PathBuf {
+        self.state_dir().join("bridge_instances.json")
+    }
+
     pub fn cache_dir(&self) -> PathBuf {
         self.root.join("cache")
     }

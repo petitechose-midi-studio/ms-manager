@@ -1,6 +1,8 @@
 pub mod assets;
+pub mod artifact_resolver;
 pub mod bridge;
 pub mod bridge_ctl;
+pub mod bridge_instances;
 pub mod bridge_process;
 pub mod bridge_status;
 pub mod device;

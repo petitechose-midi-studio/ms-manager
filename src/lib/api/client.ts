@@ -1,6 +1,10 @@
 import { invokeApi } from "$lib/api/tauri";
 import type {
   AppUpdateStatus,
+  ArtifactSource,
+  BridgeInstanceBindingResponse,
+  BridgeInstanceBindRequest,
+  BridgeInstancesResponse,
   Channel,
   BridgeStatus,
   DeviceStatus,
@@ -28,6 +32,27 @@ export function bridgeLogOpen(): Promise<void> {
   return invokeApi<void>("bridge_log_open");
 }
 
+export function bridgeInstancesGet(): Promise<BridgeInstancesResponse> {
+  return invokeApi<BridgeInstancesResponse>("bridge_instances_get");
+}
+
+export function bridgeInstanceBind(
+  request: BridgeInstanceBindRequest,
+): Promise<BridgeInstanceBindingResponse> {
+  return invokeApi<BridgeInstanceBindingResponse>("bridge_instance_bind", { request });
+}
+
+export function bridgeInstanceRemove(instanceId: string): Promise<BridgeInstancesResponse> {
+  return invokeApi<BridgeInstancesResponse>("bridge_instance_remove", { instanceId });
+}
+
+export function bridgeInstanceEnableSet(
+  instanceId: string,
+  enabled: boolean,
+): Promise<BridgeInstancesResponse> {
+  return invokeApi<BridgeInstancesResponse>("bridge_instance_enable_set", { instanceId, enabled });
+}
+
 export function settingsGet(): Promise<Settings> {
   return invokeApi<Settings>("settings_get");
 }
@@ -42,6 +67,10 @@ export function settingsSetProfile(profile: string): Promise<Settings> {
 
 export function settingsSetPinnedTag(pinnedTag: string | null): Promise<Settings> {
   return invokeApi<Settings>("settings_set_pinned_tag", { pinnedTag });
+}
+
+export function settingsSetArtifactSource(artifactSource: ArtifactSource): Promise<Settings> {
+  return invokeApi<Settings>("settings_set_artifact_source", { artifactSource });
 }
 
 export function resolveLatestManifest(channel: Channel): Promise<LatestManifestResponse> {

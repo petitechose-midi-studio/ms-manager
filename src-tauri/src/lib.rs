@@ -49,20 +49,27 @@ pub fn run() {
                     "quit" => {
                         let app = app.clone();
                         tauri::async_runtime::spawn(async move {
-                            // Best-effort: ask the daemon to exit cleanly.
-                            let _ = services::bridge_ctl::send_command(
-                                services::bridge_ctl::DEFAULT_CONTROL_PORT,
-                                "shutdown",
-                                std::time::Duration::from_millis(700),
-                            )
-                            .await;
+                            let bindings = app.state::<state::AppState>().bridge_instances_get();
+                            for binding in bindings.instances.iter().filter(|binding| binding.enabled) {
+                                let _ = services::bridge_ctl::send_command(
+                                    binding.control_port,
+                                    "shutdown",
+                                    std::time::Duration::from_millis(700),
+                                )
+                                .await;
+                            }
 
                             // Give it a moment to release ports/lock.
                             tokio::time::sleep(std::time::Duration::from_millis(250)).await;
 
                             // Strict: ensure no oc-bridge daemon is left running.
                             let layout = app.state::<state::AppState>().layout_get();
-                            let exe = services::payload::oc_bridge_path(&layout);
+                            let settings = app.state::<state::AppState>().settings_get();
+                            let exe = services::artifact_resolver::resolve_oc_bridge_exe(
+                                &settings,
+                                &layout,
+                            )
+                            .unwrap_or_else(|_| services::payload::oc_bridge_path(&layout));
                             let _ = services::bridge_process::kill_oc_bridge_daemons(&exe);
                             let _ = services::bridge_process::kill_all_oc_bridge_daemons();
 
@@ -112,6 +119,10 @@ pub fn run() {
             commands::autostart::manager_autostart_set,
             commands::bridge::bridge_status_get,
             commands::bridge::bridge_log_open,
+            commands::bridge_instances::bridge_instances_get,
+            commands::bridge_instances::bridge_instance_bind,
+            commands::bridge_instances::bridge_instance_remove,
+            commands::bridge_instances::bridge_instance_enable_set,
             commands::device::device_status_get,
             commands::flash::flash_firmware,
             commands::install::install_latest,
@@ -122,6 +133,7 @@ pub fn run() {
             commands::settings::settings_set_channel,
             commands::settings::settings_set_profile,
             commands::settings::settings_set_pinned_tag,
+            commands::settings::settings_set_artifact_source,
             commands::status::status_get,
         ])
         .run(tauri::generate_context!())

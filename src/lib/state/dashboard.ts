@@ -4,7 +4,10 @@ import { listen } from "@tauri-apps/api/event";
 import type {
   ApiError,
   AppUpdateStatus,
+  ArtifactSource,
+  BridgeMode,
   Channel,
+  DeviceTarget,
   DeviceStatus,
   BridgeStatus,
   FlashEvent,
@@ -18,6 +21,9 @@ import type {
 import {
   appUpdateCheck,
   appUpdateOpenLatest,
+  bridgeInstanceBind,
+  bridgeInstanceEnableSet,
+  bridgeInstanceRemove,
   deviceStatusGet,
   bridgeStatusGet,
   flashFirmware,
@@ -26,6 +32,7 @@ import {
   payloadRootRelocate,
   resolveLatestManifest,
   resolveManifestForTag,
+  settingsSetArtifactSource,
   settingsSetChannel,
   settingsSetPinnedTag,
   settingsSetProfile,
@@ -49,6 +56,9 @@ export type ContextMenuState = {
 export type DashboardState = {
   platform: Platform | null;
   payloadRoot: string | null;
+  artifactSource: ArtifactSource;
+  artifactConfigPath: string | null;
+  artifactMessage: string | null;
 
   appUpdate: AppUpdateStatus | null;
   checkingAppUpdate: boolean;
@@ -73,6 +83,7 @@ export type DashboardState = {
   release: LatestManifestResponse | null;
   loadingRelease: boolean;
   savingSettings: boolean;
+  bridgeMutating: boolean;
   installing: boolean;
   flashing: boolean;
   flashProgress: number | null;
@@ -104,6 +115,9 @@ export function createDashboard(activity: Activity) {
   const state = writable<DashboardState>({
     platform: null,
     payloadRoot: null,
+    artifactSource: "installed",
+    artifactConfigPath: null,
+    artifactMessage: null,
 
     appUpdate: null,
     checkingAppUpdate: false,
@@ -123,11 +137,12 @@ export function createDashboard(activity: Activity) {
     device: { connected: false, count: 0, targets: [] },
     lastFlashed: null,
 
-    bridge: { installed: false, running: false, paused: false, serial_open: false },
+    bridge: { installed: false, running: false, paused: false, serial_open: false, instances: [] },
 
     release: null,
     loadingRelease: false,
     savingSettings: false,
+    bridgeMutating: false,
     installing: false,
     flashing: false,
     flashProgress: null,
@@ -242,6 +257,9 @@ export function createDashboard(activity: Activity) {
       profile: st.settings.profile,
       platform: st.platform,
       payloadRoot: st.payload_root,
+      artifactSource: st.artifact_source,
+      artifactConfigPath: st.artifact_config_path,
+      artifactMessage: st.artifact_message,
       installed: st.installed,
       hostInstalled: st.host_installed,
       device: st.device,
@@ -549,6 +567,75 @@ export function createDashboard(activity: Activity) {
     }
   }
 
+  async function setArtifactSource(next: ArtifactSource) {
+    state.update((s) => ({ ...s, savingSettings: true }));
+    clearError();
+    try {
+      activity.add("info", "ui", `set artifact source=${next}`);
+      const s = await settingsSetArtifactSource(next);
+      state.update((st) => ({ ...st, artifactSource: s.artifact_source }));
+      await refreshStatus();
+    } catch (e) {
+      setError(e);
+    } finally {
+      state.update((s) => ({ ...s, savingSettings: false }));
+    }
+  }
+
+  async function bindHardwareBridge(target: DeviceTarget, mode: BridgeMode = "hardware") {
+    const controllerSerial = target.serial_number?.trim();
+    if (!controllerSerial) return;
+
+    state.update((s) => ({ ...s, bridgeMutating: true }));
+    clearError();
+    activity.add("info", "device", `bind bridge serial=${controllerSerial}`);
+    try {
+      await bridgeInstanceBind({
+        app: "bitwig",
+        mode,
+        controller_serial: controllerSerial,
+        controller_vid: target.vid,
+        controller_pid: target.pid,
+      });
+      await refreshStatus();
+      activity.add("ok", "device", `bridge bound serial=${controllerSerial}`);
+    } catch (e) {
+      setError(e);
+    } finally {
+      state.update((s) => ({ ...s, bridgeMutating: false }));
+    }
+  }
+
+  async function removeBridge(instanceId: string) {
+    state.update((s) => ({ ...s, bridgeMutating: true }));
+    clearError();
+    activity.add("info", "ui", `remove bridge instance=${instanceId}`);
+    try {
+      await bridgeInstanceRemove(instanceId);
+      await refreshStatus();
+      activity.add("ok", "ui", `removed bridge instance=${instanceId}`);
+    } catch (e) {
+      setError(e);
+    } finally {
+      state.update((s) => ({ ...s, bridgeMutating: false }));
+    }
+  }
+
+  async function setBridgeEnabled(instanceId: string, enabled: boolean) {
+    state.update((s) => ({ ...s, bridgeMutating: true }));
+    clearError();
+    activity.add("info", "ui", `${enabled ? "enable" : "disable"} bridge ${instanceId}`);
+    try {
+      await bridgeInstanceEnableSet(instanceId, enabled);
+      await refreshStatus();
+      activity.add("ok", "ui", `${enabled ? "enabled" : "disabled"} bridge ${instanceId}`);
+    } catch (e) {
+      setError(e);
+    } finally {
+      state.update((s) => ({ ...s, bridgeMutating: false }));
+    }
+  }
+
   function toggleActivity() {
     state.update((s) => ({ ...s, activityOpen: !s.activityOpen }));
   }
@@ -668,7 +755,11 @@ export function createDashboard(activity: Activity) {
     setChannel,
     setPinnedTag,
     setProfile,
+    setArtifactSource,
     install,
+    bindHardwareBridge,
+    removeBridge,
+    setBridgeEnabled,
     openFlashModal,
     cancelFlashModal,
     confirmFlashModal,

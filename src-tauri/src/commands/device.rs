@@ -8,5 +8,6 @@ use crate::state::AppState;
 #[tauri::command]
 pub async fn device_status_get(state: State<'_, AppState>) -> ApiResult<DeviceStatus> {
     let layout = state.layout_get();
-    Ok(device::device_status(&layout).await)
+    let settings = state.settings_get();
+    Ok(device::device_status(&settings, &layout).await)
 }

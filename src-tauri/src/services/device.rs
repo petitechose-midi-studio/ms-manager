@@ -1,9 +1,21 @@
+use ms_manager_core::Settings;
+
 use crate::layout::PayloadLayout;
 use crate::models::{DeviceStatus, DeviceTarget};
-use crate::services::process;
+use crate::services::{artifact_resolver, process};
 
-pub async fn device_status(layout: &PayloadLayout) -> DeviceStatus {
-    let loader = loader_path(layout);
+pub async fn device_status(settings: &Settings, layout: &PayloadLayout) -> DeviceStatus {
+    let loader = match artifact_resolver::resolve_loader_exe(settings, layout) {
+        Ok(path) => path,
+        Err(_) => {
+            return DeviceStatus {
+                connected: false,
+                count: 0,
+                targets: Vec::new(),
+            }
+        }
+    };
+
     if !loader.exists() {
         return DeviceStatus {
             connected: false,
@@ -41,15 +53,6 @@ pub async fn device_status(layout: &PayloadLayout) -> DeviceStatus {
         connected: count > 0,
         count,
         targets,
-    }
-}
-
-fn loader_path(layout: &PayloadLayout) -> std::path::PathBuf {
-    let bin = layout.current_dir().join("bin");
-    if cfg!(windows) {
-        bin.join("midi-studio-loader.exe")
-    } else {
-        bin.join("midi-studio-loader")
     }
 }
 

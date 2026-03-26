@@ -61,9 +61,12 @@
           : undefined,
   })) as ProfileOption[];
 
-  $: hostLabel = $dashState.installed
-    ? `${$dashState.installed.channel}:${$dashState.installed.tag}:${$dashState.installed.profile}`
-    : "";
+  $: hostLabel =
+    $dashState.artifactSource === "workspace"
+      ? "workspace"
+      : $dashState.installed
+        ? `${$dashState.installed.channel}:${$dashState.installed.tag}:${$dashState.installed.profile}`
+        : "";
 
   $: appUpdateAvailable = $dashState.appUpdate?.available ?? false;
   $: appUpdateLabel = $dashState.appUpdate?.update
@@ -86,6 +89,30 @@
     const d = Math.floor(h / 24);
     return `${d}d ago`;
   }
+
+  function fmtBridgeInstanceLabel(instanceId: string): string {
+    return instanceId.replace(/-/g, " ");
+  }
+
+  function fmtBridgeInstanceState(instance: {
+    enabled: boolean;
+    running: boolean;
+    paused: boolean;
+    serial_open: boolean;
+  }): string {
+    if (!instance.enabled) return "disabled";
+    if (!instance.running) return "down";
+    if (instance.paused) return "paused";
+    return instance.serial_open ? "serial open" : "waiting";
+  }
+
+  $: serialTargets = ($dashState.device.targets ?? []).filter(
+    (target) => target.kind === "serial" && !!target.serial_number
+  );
+  $: boundSerials = new Set($dashState.bridge.instances.map((instance) => instance.configured_serial));
+  $: unboundSerialTargets = serialTargets.filter(
+    (target) => !boundSerials.has(target.serial_number ?? "")
+  );
 
   $: flashRecommended = (() => {
     const s = $dashState;
@@ -179,6 +206,18 @@
       const msg = typeof err?.message === "string" ? err.message : String(e);
       activity.add("warn", "ui", `open bridge logs failed: ${msg}`, e);
     }
+  }
+
+  async function bindTarget(target: (typeof serialTargets)[number]) {
+    await dash.bindHardwareBridge(target);
+  }
+
+  async function toggleBridge(instanceId: string, enabled: boolean) {
+    await dash.setBridgeEnabled(instanceId, enabled);
+  }
+
+  async function removeBridge(instanceId: string) {
+    await dash.removeBridge(instanceId);
   }
 </script>
 
@@ -342,8 +381,30 @@
         <div class="section">
           <div class="sectionTitle">Host</div>
           <div class="kv">
-            <div class="k">Installed</div>
-            <div class="v">{$dashState.hostInstalled ? hostLabel : "not installed"}</div>
+            <div class="k">Source</div>
+            <div class="v rootRow">
+              <span class="path">{$dashState.artifactSource}</span>
+              <span class="rootActions">
+                <button
+                  class="mini"
+                  type="button"
+                  disabled={$dashState.savingSettings || $dashState.artifactSource === "installed"}
+                  onclick={() => dash.setArtifactSource("installed")}
+                >
+                  Installed
+                </button>
+                <button
+                  class="mini"
+                  type="button"
+                  disabled={$dashState.savingSettings || $dashState.artifactSource === "workspace"}
+                  onclick={() => dash.setArtifactSource("workspace")}
+                >
+                  Workspace
+                </button>
+              </span>
+            </div>
+            <div class="k">Ready</div>
+            <div class="v">{$dashState.hostInstalled ? hostLabel : "not ready"}</div>
             <div class="k">Root</div>
             <div class="v rootRow">
               <span class="path">{$dashState.payloadRoot ?? "-"}</span>
@@ -371,7 +432,14 @@
                 </button>
               </span>
             </div>
+            <div class="k">Dev config</div>
+            <div class="v">
+              {$dashState.artifactConfigPath ?? "-"}
+            </div>
           </div>
+          {#if $dashState.artifactMessage}
+            <div class="muted">{$dashState.artifactMessage}</div>
+          {/if}
         </div>
 
         <div class="section">
@@ -391,7 +459,7 @@
             <div class="v">{$dashState.bridge.version ?? "-"}</div>
             <div class="k">Logs</div>
             <div class="v rootRow">
-              <span class="path">bridge.log</span>
+              <span class="path">bridge logs</span>
               <span class="rootActions">
                 <button class="mini" type="button" onclick={openBridgeLogs}>Open</button>
               </span>
@@ -400,6 +468,91 @@
           {#if $dashState.bridge.message && !$dashState.bridge.running}
             <div class="muted">{$dashState.bridge.message}</div>
           {/if}
+
+          <div class="bridgeList">
+            <div class="bridgeListHead">Instances ({$dashState.bridge.instances.length})</div>
+            {#if !$dashState.bridge.instances.length}
+              <div class="muted">No bridge instance configured.</div>
+            {:else}
+              {#each $dashState.bridge.instances as instance (instance.instance_id)}
+                <div class="bridgeCard">
+                  <div class="bridgeCardTop">
+                    <div>
+                      <div class="bridgeName">{fmtBridgeInstanceLabel(instance.instance_id)}</div>
+                      <div class="bridgeMeta">
+                        serial {instance.configured_serial}
+                        {#if instance.resolved_serial_port}
+                          · {instance.resolved_serial_port}
+                        {/if}
+                      </div>
+                    </div>
+                    <div class="bridgeState" data-running={instance.running}>
+                      {fmtBridgeInstanceState(instance)}
+                    </div>
+                  </div>
+                  <div class="bridgePorts">
+                    host {instance.host_udp_port} · ctl {instance.control_port} · log {instance.log_broadcast_port}
+                  </div>
+                  {#if instance.message && !instance.running}
+                    <div class="muted">{instance.message}</div>
+                  {/if}
+                  <div class="bridgeActions">
+                    <button
+                      class="mini"
+                      type="button"
+                      disabled={$dashState.bridgeMutating || $dashState.flashing || $dashState.installing}
+                      onclick={() => toggleBridge(instance.instance_id, !instance.enabled)}
+                    >
+                      {instance.enabled ? "Disable" : "Enable"}
+                    </button>
+                    <button
+                      class="mini"
+                      type="button"
+                      disabled={$dashState.bridgeMutating || $dashState.flashing || $dashState.installing}
+                      onclick={() => removeBridge(instance.instance_id)}
+                    >
+                      Remove
+                    </button>
+                  </div>
+                </div>
+              {/each}
+            {/if}
+          </div>
+
+          <div class="bridgeList">
+            <div class="bridgeListHead">Detected Controllers</div>
+            {#if !serialTargets.length}
+              <div class="muted">No serial controller detected.</div>
+            {:else if !unboundSerialTargets.length}
+              <div class="muted">All detected controllers already have a bridge binding.</div>
+            {:else}
+              {#each unboundSerialTargets as target (target.target_id)}
+                <div class="bridgeCard">
+                  <div class="bridgeCardTop">
+                    <div>
+                      <div class="bridgeName">{target.product ?? "Controller"}</div>
+                      <div class="bridgeMeta">
+                        {target.serial_number}
+                        {#if target.port_name}
+                          · {target.port_name}
+                        {/if}
+                      </div>
+                    </div>
+                  </div>
+                  <div class="bridgeActions">
+                    <button
+                      class="mini"
+                      type="button"
+                      disabled={$dashState.bridgeMutating || $dashState.flashing || $dashState.installing}
+                      onclick={() => bindTarget(target)}
+                    >
+                      Bind Bitwig
+                    </button>
+                  </div>
+                </div>
+              {/each}
+            {/if}
+          </div>
         </div>
 
         <div class="section">
@@ -479,6 +632,8 @@
     open={$dashState.flashModal.open}
     targetProfile={$dashState.flashModal.targetProfile}
     hostInstalled={$dashState.hostInstalled}
+    artifactSource={$dashState.artifactSource}
+    artifactMessage={$dashState.artifactMessage}
     installed={$dashState.installed}
     controllerConnected={$dashState.device.connected}
     flashing={$dashState.flashing}
@@ -709,6 +864,79 @@
 
   .muted {
     color: var(--muted);
+  }
+
+  .bridgeList {
+    display: grid;
+    gap: 8px;
+  }
+
+  .bridgeListHead {
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  .bridgeCard {
+    display: grid;
+    gap: 8px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px 12px;
+    background: rgba(0, 0, 0, 0.04);
+  }
+
+  :global(:root[data-theme="light"]) .bridgeCard {
+    background: rgba(0, 0, 0, 0.02);
+  }
+
+  .bridgeCardTop {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 10px;
+  }
+
+  .bridgeName {
+    color: var(--fg);
+    font-weight: 800;
+    font-size: 13px;
+    line-height: 16px;
+  }
+
+  .bridgeMeta,
+  .bridgePorts {
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 16px;
+    font-family: var(--font-mono);
+    overflow-wrap: anywhere;
+  }
+
+  .bridgeState {
+    color: var(--muted);
+    font-size: 11px;
+    line-height: 14px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 4px 8px;
+    white-space: nowrap;
+  }
+
+  .bridgeState[data-running="true"] {
+    color: var(--ok);
+    border-color: var(--ok);
+  }
+
+  .bridgeActions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
   }
 
   .note {

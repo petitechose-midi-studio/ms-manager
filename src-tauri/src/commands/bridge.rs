@@ -8,21 +8,16 @@ use crate::state::AppState;
 #[tauri::command]
 pub async fn bridge_status_get(state: State<'_, AppState>) -> ApiResult<BridgeStatus> {
     let layout = state.layout_get();
-    Ok(bridge_status::bridge_status(&layout).await)
+    let settings = state.settings_get();
+    Ok(bridge_status::bridge_status(&settings, &layout, &state.bridge_instances_get()).await)
 }
 
 #[tauri::command]
 pub fn bridge_log_open() -> ApiResult<()> {
     let dir = oc_bridge_config_dir()?;
-    let log = dir.join("bridge.log");
+    let target = dir;
 
-    // If there's no log file yet, open the directory.
-    let target = if log.exists() { log } else { dir };
-
-    // Best-effort: ensure directory exists so the opener doesn't error.
-    if let Some(parent) = target.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
+    let _ = std::fs::create_dir_all(&target);
 
     let mut cmd = if cfg!(windows) {
         // Select the file in Explorer when possible.

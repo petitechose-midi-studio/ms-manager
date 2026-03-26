@@ -6,9 +6,13 @@ node_modules
 .env
 .env.*
 !.env.example
+dev-artifacts.local.json
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 
 # Rust
 target
 **/target
+
+INSTANCE_REFACTOR_PLAN.local.md
+

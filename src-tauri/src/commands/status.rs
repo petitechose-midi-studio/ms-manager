@@ -2,6 +2,7 @@ use tauri::State;
 
 use crate::api_error::ApiResult;
 use crate::models::Status;
+use crate::services::artifact_resolver;
 use crate::services::bridge_status;
 use crate::services::device;
 use crate::state::AppState;
@@ -13,11 +14,10 @@ pub async fn status_get(state: State<'_, AppState>) -> ApiResult<Status> {
 
 pub(crate) async fn status_get_internal(state: &AppState) -> ApiResult<Status> {
     let layout = state.layout_get();
+    let settings = state.settings_get();
     let installed = state.install_state_get();
-    let host_installed = installed
-        .as_ref()
-        .is_some_and(|i| layout.version_dir(&i.tag).exists())
-        && layout.current_dir().join("bin").exists();
+    let artifact_health = artifact_resolver::artifact_health(&settings, &layout, installed.as_ref());
+    let host_installed = artifact_health.ready;
 
     let bridge = if !host_installed {
         crate::models::BridgeStatus {
@@ -26,19 +26,31 @@ pub(crate) async fn status_get_internal(state: &AppState) -> ApiResult<Status> {
             paused: false,
             serial_open: false,
             version: None,
-            message: Some("host not installed".to_string()),
+            message: Some(
+                artifact_health
+                    .message
+                    .clone()
+                    .unwrap_or_else(|| "host artifacts are not available".to_string()),
+            ),
+            instances: Vec::new(),
         }
     } else {
-        bridge_status::bridge_status(&layout).await
+        bridge_status::bridge_status(&settings, &layout, &state.bridge_instances_get()).await
     };
+    let device = device::device_status(&settings, &layout).await;
 
     Ok(Status {
-        settings: state.settings_get(),
+        settings,
         installed,
         host_installed,
+        artifact_source: artifact_health.source,
+        artifact_config_path: artifact_health
+            .config_path
+            .map(|path| path.display().to_string()),
+        artifact_message: artifact_health.message,
         platform: ms_manager_core::Platform::current()?,
         payload_root: layout.root().display().to_string(),
-        device: device::device_status(&layout).await,
+        device,
         last_flashed: state.controller_last_flashed(),
         bridge,
     })

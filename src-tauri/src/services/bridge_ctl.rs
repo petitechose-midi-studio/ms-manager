@@ -54,11 +54,3 @@ pub async fn send_command(
 
     serde_json::from_str::<serde_json::Value>(text).map_err(|e| e.to_string())
 }
-
-pub async fn ping(timeout: Duration) -> bool {
-    let Ok(v) = send_command(DEFAULT_CONTROL_PORT, "ping", timeout).await else {
-        return false;
-    };
-
-    v.get("ok").and_then(|v| v.as_bool()).unwrap_or(false)
-}

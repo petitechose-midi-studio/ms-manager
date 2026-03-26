@@ -2,7 +2,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
 use ms_manager_core::{
-    Channel, ControllerState, InstallState, LastFlashed, Settings, CONTROLLER_STATE_SCHEMA,
+    ArtifactSource, BridgeInstanceBinding, BridgeInstancesState, Channel, ControllerState,
+    InstallState, LastFlashed, Settings, BRIDGE_INSTANCES_SCHEMA, CONTROLLER_STATE_SCHEMA,
     INSTALL_STATE_SCHEMA, SETTINGS_SCHEMA,
 };
 use reqwest::Client;
@@ -20,6 +21,7 @@ pub struct AppState {
     settings: Mutex<Settings>,
     install_state: Mutex<Option<InstallState>>,
     controller_state: Mutex<ControllerState>,
+    bridge_instances: Mutex<BridgeInstancesState>,
 }
 
 impl AppState {
@@ -35,6 +37,7 @@ impl AppState {
 
         let install_state = load_install_state(&layout, &layout.install_state_file())?;
         let controller_state = load_controller_state(&layout.controller_state_file())?;
+        let bridge_instances = load_bridge_instances_state(&layout.bridge_instances_file())?;
 
         let http = Client::builder()
             .user_agent("ms-manager")
@@ -48,6 +51,7 @@ impl AppState {
             settings: Mutex::new(settings),
             install_state: Mutex::new(install_state),
             controller_state: Mutex::new(controller_state),
+            bridge_instances: Mutex::new(bridge_instances),
         })
     }
 
@@ -63,8 +67,10 @@ impl AppState {
         let layout = self.layout_get();
         let install_state = load_install_state(&layout, &layout.install_state_file())?;
         let controller_state = load_controller_state(&layout.controller_state_file())?;
+        let bridge_instances = load_bridge_instances_state(&layout.bridge_instances_file())?;
         *self.install_state.lock().unwrap() = install_state;
         *self.controller_state.lock().unwrap() = controller_state;
+        *self.bridge_instances.lock().unwrap() = bridge_instances;
         Ok(())
     }
 
@@ -112,6 +118,22 @@ impl AppState {
         let mut s = self.settings.lock().unwrap();
         if s.pinned_tag != pinned_tag {
             s.pinned_tag = pinned_tag;
+        }
+        if s.schema != SETTINGS_SCHEMA {
+            s.schema = SETTINGS_SCHEMA;
+        }
+
+        write_json_atomic(&self.settings_path, &*s)?;
+        Ok(s.clone())
+    }
+
+    pub fn settings_set_artifact_source(
+        &self,
+        artifact_source: ArtifactSource,
+    ) -> ApiResult<Settings> {
+        let mut s = self.settings.lock().unwrap();
+        if s.artifact_source != artifact_source {
+            s.artifact_source = artifact_source;
         }
         if s.schema != SETTINGS_SCHEMA {
             s.schema = SETTINGS_SCHEMA;
@@ -179,6 +201,43 @@ impl AppState {
         write_json_atomic(&path, &*s)?;
         Ok(s.clone())
     }
+
+    pub fn bridge_instances_get(&self) -> BridgeInstancesState {
+        self.bridge_instances.lock().unwrap().clone()
+    }
+
+    pub fn bridge_instances_set(
+        &self,
+        mut next: BridgeInstancesState,
+    ) -> ApiResult<BridgeInstancesState> {
+        if next.schema != BRIDGE_INSTANCES_SCHEMA {
+            next.schema = BRIDGE_INSTANCES_SCHEMA;
+        }
+        next.validate().map_err(|reason| {
+            ApiError::new("bridge_instances_invalid", reason)
+        })?;
+
+        let path = self.layout_get().bridge_instances_file();
+        write_json_atomic(&path, &next)?;
+        *self.bridge_instances.lock().unwrap() = next.clone();
+        Ok(next)
+    }
+
+    pub fn bridge_instance_upsert(
+        &self,
+        next: BridgeInstanceBinding,
+    ) -> ApiResult<BridgeInstancesState> {
+        let mut state = self.bridge_instances_get();
+        state.instances.retain(|instance| instance.instance_id != next.instance_id);
+        state.instances.push(next);
+        self.bridge_instances_set(state)
+    }
+
+    pub fn bridge_instance_remove(&self, instance_id: &str) -> ApiResult<BridgeInstancesState> {
+        let mut state = self.bridge_instances_get();
+        state.instances.retain(|instance| instance.instance_id != instance_id);
+        self.bridge_instances_set(state)
+    }
 }
 
 fn load_settings(path: &Path) -> ApiResult<Settings> {
@@ -244,6 +303,23 @@ fn load_controller_state(path: &Path) -> ApiResult<ControllerState> {
 
     if s.schema != CONTROLLER_STATE_SCHEMA {
         return Ok(ControllerState::default());
+    }
+    Ok(s)
+}
+
+fn load_bridge_instances_state(path: &Path) -> ApiResult<BridgeInstancesState> {
+    let s = match read_json_optional::<BridgeInstancesState>(path) {
+        Ok(Some(v)) => v,
+        Ok(None) => return Ok(BridgeInstancesState::default()),
+        Err(e) if e.code == "json_parse_failed" => {
+            let _ = std::fs::rename(path, path.with_extension("corrupt.json"));
+            return Ok(BridgeInstancesState::default());
+        }
+        Err(e) => return Err(e),
+    };
+
+    if s.schema != BRIDGE_INSTANCES_SCHEMA || s.validate().is_err() {
+        return Ok(BridgeInstancesState::default());
     }
     Ok(s)
 }

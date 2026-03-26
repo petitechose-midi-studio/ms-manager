@@ -3,6 +3,7 @@
 //! This crate is intentionally UI-agnostic and does not depend on Tauri.
 
 mod channel;
+mod bridge_instances;
 mod controller_state;
 mod crypto;
 mod dist;
@@ -14,6 +15,9 @@ mod platform;
 mod settings;
 
 pub use channel::{compare_tags, is_tag_for_channel, BetaVersion, Channel, NightlyDate, SemVer};
+pub use bridge_instances::{
+    BridgeApp, BridgeInstanceBinding, BridgeInstancesState, BridgeMode, BRIDGE_INSTANCES_SCHEMA,
+};
 pub use controller_state::{ControllerState, LastFlashed, CONTROLLER_STATE_SCHEMA};
 pub use crypto::{decode_b64_32, sha256_hex, verify_manifest_sig_b64};
 pub use dist::{
@@ -32,7 +36,7 @@ pub use manifest::{
     ManifestChannel,
 };
 pub use platform::{Arch, Os, Platform};
-pub use settings::{Settings, SETTINGS_SCHEMA};
+pub use settings::{ArtifactSource, Settings, SETTINGS_SCHEMA};
 
 #[cfg(test)]
 mod tests {

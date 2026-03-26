@@ -1,9 +1,11 @@
 <script lang="ts">
-  import type { InstallState } from "$lib/api/types";
+  import type { ArtifactSource, InstallState } from "$lib/api/types";
 
   export let open: boolean;
   export let targetProfile: string | null;
   export let hostInstalled: boolean;
+  export let artifactSource: ArtifactSource;
+  export let artifactMessage: string | null;
   export let installed: InstallState | null;
   export let controllerConnected: boolean;
   export let flashing: boolean;
@@ -14,7 +16,11 @@
   export let onCancel: () => void;
   export let onConfirm: () => void;
 
-  $: firmwareSource = installed ? `${installed.channel} / ${installed.tag}` : "(not installed)";
+  $: firmwareSource = installed
+    ? `${installed.channel} / ${installed.tag}`
+    : artifactSource === "workspace"
+      ? "workspace artifacts"
+      : "(not installed)";
   $: installedProfile = installed ? installed.profile : null;
   $: pct = progress == null ? null : Math.max(0, Math.min(100, Math.round(progress)));
   $: canConfirm = hostInstalled && !!targetProfile && ack && !flashing;
@@ -52,7 +58,13 @@
       </label>
 
       {#if !hostInstalled}
-        <div class="note">Install the host bundle first (so firmware + loader are available).</div>
+        <div class="note">
+          {#if artifactSource === "workspace"}
+            {artifactMessage ?? "Configure dev-artifacts.local.json and build the workspace binaries first."}
+          {:else}
+            Install the host bundle first (so firmware + loader are available).
+          {/if}
+        </div>
       {:else if installed && targetProfile && installed.profile !== targetProfile}
         <div class="note">
           The target profile firmware may not be installed yet. If flashing fails, run

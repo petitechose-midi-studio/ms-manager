@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "strict": true,
+  "artifacts": {
+    "oc_bridge_exe": "../open-control/bridge/target/release/oc-bridge.exe",
+    "loader_exe": "../midi-studio/loader/target/release/midi-studio-loader.exe",
+    "firmware_standalone": "../midi-studio/core/.pio/build/dev/firmware.hex",
+    "firmware_bitwig": "../midi-studio/plugin-bitwig/.pio/build/dev/firmware.hex",
+    "bitwig_extension": "../midi-studio/plugin-bitwig/host/target/midi_studio.bwextension"
+  }
+}

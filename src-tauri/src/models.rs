@@ -1,6 +1,26 @@
 use serde::{Deserialize, Serialize};
 
-use ms_manager_core::{Channel, InstallState, LastFlashed, Manifest, Platform, Settings};
+use ms_manager_core::{
+    ArtifactSource, BridgeInstanceBinding, BridgeInstancesState, Channel, InstallState,
+    LastFlashed, Manifest, Platform, Settings,
+};
+
+#[derive(Debug, Clone, Serialize)]
+pub struct BridgeInstanceStatus {
+    pub instance_id: String,
+    pub configured_serial: String,
+    pub enabled: bool,
+    pub running: bool,
+    pub paused: bool,
+    pub serial_open: bool,
+    pub version: Option<String>,
+    pub resolved_serial_port: Option<String>,
+    pub connected_serial: Option<String>,
+    pub message: Option<String>,
+    pub host_udp_port: u16,
+    pub control_port: u16,
+    pub log_broadcast_port: u16,
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct BridgeStatus {
@@ -10,6 +30,7 @@ pub struct BridgeStatus {
     pub serial_open: bool,
     pub version: Option<String>,
     pub message: Option<String>,
+    pub instances: Vec<BridgeInstanceStatus>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -45,11 +66,33 @@ pub struct Status {
     pub settings: Settings,
     pub installed: Option<InstallState>,
     pub host_installed: bool,
+    pub artifact_source: ArtifactSource,
+    pub artifact_config_path: Option<String>,
+    pub artifact_message: Option<String>,
     pub platform: Platform,
     pub payload_root: String,
     pub device: DeviceStatus,
     pub last_flashed: Option<LastFlashed>,
     pub bridge: BridgeStatus,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct BridgeInstancesResponse {
+    pub state: BridgeInstancesState,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BridgeInstanceBindRequest {
+    pub app: ms_manager_core::BridgeApp,
+    pub mode: ms_manager_core::BridgeMode,
+    pub controller_serial: String,
+    pub controller_vid: u32,
+    pub controller_pid: u32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct BridgeInstanceBindingResponse {
+    pub binding: BridgeInstanceBinding,
 }
 
 #[derive(Debug, Clone, Serialize)]
