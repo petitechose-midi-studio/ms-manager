@@ -10,15 +10,13 @@ use crate::state::AppState;
 pub async fn bridge_status_get(state: State<'_, AppState>) -> ApiResult<BridgeStatus> {
     let layout = state.layout_get();
     let installed = state.install_state_get();
-    Ok(
-        bridge_status::bridge_status(
-            &layout,
-            installed.as_ref(),
-            &state.bridge_instances_get(),
-            &state.controller_state_get(),
-        )
-        .await,
+    Ok(bridge_status::bridge_status(
+        &layout,
+        installed.as_ref(),
+        &state.bridge_instances_get(),
+        &state.controller_state_get(),
     )
+    .await)
 }
 
 #[tauri::command]

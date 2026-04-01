@@ -6,7 +6,8 @@ use tauri::AppHandle;
 use crate::api_error::{ApiError, ApiResult};
 use crate::models::{AppUpdateInfo, AppUpdateStatus};
 
-const RELEASES_API_URL: &str = "https://api.github.com/repos/petitechose-midi-studio/ms-manager/releases/latest";
+const RELEASES_API_URL: &str =
+    "https://api.github.com/repos/petitechose-midi-studio/ms-manager/releases/latest";
 const RELEASES_PAGE_URL: &str =
     "https://github.com/petitechose-midi-studio/ms-manager/releases/latest";
 

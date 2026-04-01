@@ -36,7 +36,8 @@ impl AppState {
         let install_state = load_install_state(&layout, &layout.install_state_file())?;
         let bridge_instances = load_bridge_instances_state(&layout.bridge_instances_file())?;
         let controller_state_raw = load_controller_state(&layout.controller_state_file())?;
-        let controller_state = migrate_controller_state(controller_state_raw.clone(), &bridge_instances);
+        let controller_state =
+            migrate_controller_state(controller_state_raw.clone(), &bridge_instances);
         if controller_state != controller_state_raw {
             let _ = write_json_atomic(&layout.controller_state_file(), &controller_state);
         }
@@ -69,7 +70,8 @@ impl AppState {
         let install_state = load_install_state(&layout, &layout.install_state_file())?;
         let bridge_instances = load_bridge_instances_state(&layout.bridge_instances_file())?;
         let controller_state_raw = load_controller_state(&layout.controller_state_file())?;
-        let controller_state = migrate_controller_state(controller_state_raw.clone(), &bridge_instances);
+        let controller_state =
+            migrate_controller_state(controller_state_raw.clone(), &bridge_instances);
         if controller_state != controller_state_raw {
             let _ = write_json_atomic(&layout.controller_state_file(), &controller_state);
         }
@@ -154,9 +156,8 @@ impl AppState {
         if next.schema != BRIDGE_INSTANCES_SCHEMA {
             next.schema = BRIDGE_INSTANCES_SCHEMA;
         }
-        next.validate().map_err(|reason| {
-            ApiError::new("bridge_instances_invalid", reason)
-        })?;
+        next.validate()
+            .map_err(|reason| ApiError::new("bridge_instances_invalid", reason))?;
 
         let path = self.layout_get().bridge_instances_file();
         write_json_atomic(&path, &next)?;
@@ -169,14 +170,18 @@ impl AppState {
         next: BridgeInstanceBinding,
     ) -> ApiResult<BridgeInstancesState> {
         let mut state = self.bridge_instances_get();
-        state.instances.retain(|instance| instance.instance_id != next.instance_id);
+        state
+            .instances
+            .retain(|instance| instance.instance_id != next.instance_id);
         state.instances.push(next);
         self.bridge_instances_set(state)
     }
 
     pub fn bridge_instance_remove(&self, instance_id: &str) -> ApiResult<BridgeInstancesState> {
         let mut state = self.bridge_instances_get();
-        state.instances.retain(|instance| instance.instance_id != instance_id);
+        state
+            .instances
+            .retain(|instance| instance.instance_id != instance_id);
         self.bridge_instances_set(state)
     }
 

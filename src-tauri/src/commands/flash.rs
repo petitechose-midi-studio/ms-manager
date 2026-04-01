@@ -24,7 +24,8 @@ pub async fn flash_bridge_instance(
             )
         })?;
 
-    let last = flash::flash_firmware_for_binding(&app, &layout, installed.as_ref(), &binding).await?;
+    let last =
+        flash::flash_firmware_for_binding(&app, &layout, installed.as_ref(), &binding).await?;
     let _ = state.controller_last_flashed_set(&binding.instance_id, last.clone())?;
     Ok(last)
 }

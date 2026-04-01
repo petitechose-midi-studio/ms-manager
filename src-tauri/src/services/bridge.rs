@@ -92,9 +92,7 @@ async fn auto_bind_single_serial_target(
         .unwrap_or_else(|_| bindings.clone())
 }
 
-fn single_serial_target(
-    targets: &[crate::models::DeviceTarget],
-) -> Option<(String, u32, u32)> {
+fn single_serial_target(targets: &[crate::models::DeviceTarget]) -> Option<(String, u32, u32)> {
     let mut serial_targets = targets
         .iter()
         .filter(|target| matches!(target.kind, DeviceTargetKind::Serial))
@@ -134,7 +132,10 @@ async fn bridge_instance_ready(binding: &BridgeInstanceBinding, timeout: Duratio
         return false;
     };
 
-    let ok = v.get("ok").and_then(|value| value.as_bool()).unwrap_or(false);
+    let ok = v
+        .get("ok")
+        .and_then(|value| value.as_bool())
+        .unwrap_or(false);
     let instance_id = v
         .get("instance_id")
         .and_then(|value| value.as_str())
@@ -302,8 +303,12 @@ async fn cleanup_windows_wrapper_files() {
     let _ = tokio::fs::remove_file(bat).await;
 }
 
-async fn bridge_spawn_daemon(layout: &PayloadLayout, binding: &BridgeInstanceBinding) -> Result<(), ()> {
-    let exe = artifact_resolver::resolve_oc_bridge_exe_for_binding(layout, binding).map_err(|_| ())?;
+async fn bridge_spawn_daemon(
+    layout: &PayloadLayout,
+    binding: &BridgeInstanceBinding,
+) -> Result<(), ()> {
+    let exe =
+        artifact_resolver::resolve_oc_bridge_exe_for_binding(layout, binding).map_err(|_| ())?;
 
     let mut cmd = Command::new(exe);
     process::no_console_window(&mut cmd);

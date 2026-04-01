@@ -104,6 +104,7 @@ pub fn bridge_instance_name_set(
     state: State<'_, AppState>,
     request: BridgeInstanceNameSetRequest,
 ) -> ApiResult<BridgeInstancesResponse> {
-    let state = state.bridge_instance_set_display_name(&request.instance_id, request.display_name)?;
+    let state =
+        state.bridge_instance_set_display_name(&request.instance_id, request.display_name)?;
     Ok(BridgeInstancesResponse { state })
 }

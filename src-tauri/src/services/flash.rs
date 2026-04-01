@@ -9,8 +9,8 @@ use tauri::Emitter;
 use crate::api_error::{ApiError, ApiResult};
 use crate::layout::PayloadLayout;
 use crate::models::FlashEvent;
-use crate::services::{artifact_resolver, bridge_ctl, device};
 use crate::services::process;
+use crate::services::{artifact_resolver, bridge_ctl, device};
 
 const FLASH_EVENT: &str = "ms-manager://flash";
 
@@ -26,7 +26,9 @@ pub async fn flash_firmware_for_binding(
     pause_bridge_instance(binding).await;
 
     let profile = binding.target.profile_id().to_string();
-    let channel = binding.installed_channel.unwrap_or(ms_manager_core::Channel::Stable);
+    let channel = binding
+        .installed_channel
+        .unwrap_or(ms_manager_core::Channel::Stable);
     let tag = flash_tag(installed, binding);
 
     let _ = app.emit(
@@ -84,7 +86,7 @@ pub async fn flash_firmware_for_binding(
     while let Some(line) = lines
         .next_line()
         .await
-        .map_err(|e| ApiError::new("io_read_failed", format!("flash stdout: {e}")))? 
+        .map_err(|e| ApiError::new("io_read_failed", format!("flash stdout: {e}")))?
     {
         if line.trim().is_empty() {
             continue;
@@ -108,16 +110,15 @@ pub async fn flash_firmware_for_binding(
     if !ok {
         let summary = summarize_flash_failure(&stdout_lines, &stderr);
         return Err(
-            ApiError::new("flash_failed", format!("firmware flash failed: {summary}")).with_details(
-                serde_json::json!({
+            ApiError::new("flash_failed", format!("firmware flash failed: {summary}"))
+                .with_details(serde_json::json!({
                     "exit_code": status.code(),
                     "stderr": stderr,
                     "stdout": stdout_lines,
                     "firmware": firmware.display().to_string(),
                     "instance_id": binding.instance_id,
                     "device_target_id": device_target.target_id,
-                }),
-            ),
+                })),
         );
     }
 
@@ -223,7 +224,10 @@ mod tests {
         ];
 
         let summary = summarize_flash_failure(&lines, "");
-        assert_eq!(summary, "multiple targets detected (2); use --device or --all");
+        assert_eq!(
+            summary,
+            "multiple targets detected (2); use --device or --all"
+        );
     }
 
     #[test]

@@ -102,7 +102,10 @@ pub fn installed_oc_bridge_exe(layout: &PayloadLayout) -> PathBuf {
 }
 
 pub fn installed_oc_bridge_exe_for_tag(layout: &PayloadLayout, tag: Option<&str>) -> PathBuf {
-    match tag.map(|value| value.trim()).filter(|value| !value.is_empty()) {
+    match tag
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+    {
         Some(tag) => {
             let bin = layout.version_dir(tag).join("bin");
             if cfg!(windows) {
@@ -125,7 +128,10 @@ pub fn installed_loader_exe(layout: &PayloadLayout) -> PathBuf {
 }
 
 pub fn installed_loader_exe_for_tag(layout: &PayloadLayout, tag: Option<&str>) -> PathBuf {
-    match tag.map(|value| value.trim()).filter(|value| !value.is_empty()) {
+    match tag
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+    {
         Some(tag) => {
             let bin = layout.version_dir(tag).join("bin");
             if cfg!(windows) {
@@ -164,7 +170,10 @@ pub fn resolve_installed_tag<'a>(
     binding_tag: Option<&'a str>,
     installed: Option<&'a InstallState>,
 ) -> ApiResult<&'a str> {
-    if let Some(tag) = binding_tag.map(|value| value.trim()).filter(|value| !value.is_empty()) {
+    if let Some(tag) = binding_tag
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+    {
         return Ok(tag);
     }
 

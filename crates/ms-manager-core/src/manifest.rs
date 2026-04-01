@@ -85,7 +85,7 @@ pub fn select_install_set_assets(
                 id: install_set_id.to_string(),
                 os: os.to_string(),
                 arch: arch.to_string(),
-            })
+            });
         }
     };
 

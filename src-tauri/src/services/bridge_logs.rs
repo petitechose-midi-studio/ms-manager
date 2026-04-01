@@ -113,7 +113,11 @@ async fn run_bridge_log_listener(
     started_ports.lock().unwrap().remove(&port);
 }
 
-fn map_bridge_log_event(app: &tauri::AppHandle, port: u16, entry: BridgeLogEntry) -> BridgeLogEvent {
+fn map_bridge_log_event(
+    app: &tauri::AppHandle,
+    port: u16,
+    entry: BridgeLogEntry,
+) -> BridgeLogEvent {
     let instance_id = app
         .state::<AppState>()
         .bridge_instances_get()
@@ -123,16 +127,20 @@ fn map_bridge_log_event(app: &tauri::AppHandle, port: u16, entry: BridgeLogEntry
         .map(|binding| binding.instance_id);
 
     let (kind, level, message) = match entry.kind {
-        BridgeLogKind::System { message } => ("system".to_string(), Some("info".to_string()), message),
+        BridgeLogKind::System { message } => {
+            ("system".to_string(), Some("info".to_string()), message)
+        }
         BridgeLogKind::Debug { level, message } => (
             "debug".to_string(),
-            Some(match level.unwrap_or(BridgeLogLevel::Info) {
-                BridgeLogLevel::Debug => "debug",
-                BridgeLogLevel::Info => "info",
-                BridgeLogLevel::Warn => "warn",
-                BridgeLogLevel::Error => "error",
-            }
-            .to_string()),
+            Some(
+                match level.unwrap_or(BridgeLogLevel::Info) {
+                    BridgeLogLevel::Debug => "debug",
+                    BridgeLogLevel::Info => "info",
+                    BridgeLogLevel::Warn => "warn",
+                    BridgeLogLevel::Error => "error",
+                }
+                .to_string(),
+            ),
             message,
         ),
         BridgeLogKind::Protocol {

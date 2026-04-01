@@ -28,7 +28,9 @@ pub async fn bridge_status(
     }
 
     let running = instances.iter().any(|instance| instance.running);
-    let paused = instances.iter().any(|instance| instance.running && instance.paused);
+    let paused = instances
+        .iter()
+        .any(|instance| instance.running && instance.paused);
     let serial_open = instances
         .iter()
         .any(|instance| instance.running && instance.serial_open);
@@ -54,8 +56,15 @@ async fn bridge_instance_status(
     binding: &BridgeInstanceBinding,
     controller_state: &ControllerState,
 ) -> BridgeInstanceStatus {
-    let artifact_health = artifact_resolver::artifact_health_for_binding(layout, installed, binding);
-    let mut status = base_instance_status(layout, installed, binding, controller_state, artifact_health);
+    let artifact_health =
+        artifact_resolver::artifact_health_for_binding(layout, installed, binding);
+    let mut status = base_instance_status(
+        layout,
+        installed,
+        binding,
+        controller_state,
+        artifact_health,
+    );
 
     match bridge_ctl::send_command(
         binding.control_port,
@@ -113,7 +122,10 @@ fn apply_runtime_status(
     binding: &BridgeInstanceBinding,
     value: serde_json::Value,
 ) {
-    let ok = value.get("ok").and_then(|field| field.as_bool()).unwrap_or(false);
+    let ok = value
+        .get("ok")
+        .and_then(|field| field.as_bool())
+        .unwrap_or(false);
     status.paused = value
         .get("paused")
         .and_then(|field| field.as_bool())
@@ -134,9 +146,7 @@ fn apply_runtime_status(
         .get("controller_serial")
         .and_then(|field| field.as_str())
         .map(ToOwned::to_owned);
-    let reported_instance_id = value
-        .get("instance_id")
-        .and_then(|field| field.as_str());
+    let reported_instance_id = value.get("instance_id").and_then(|field| field.as_str());
 
     status.message = value
         .get("message")

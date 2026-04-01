@@ -304,26 +304,27 @@ fn remove_current_pointer(layout: &PayloadLayout) -> ApiResult<()> {
             .arg(&current)
             .output()
             .map_err(|e| {
-                ApiError::new("io_exec_failed", format!("rmdir {}: {e}", current.display()))
+                ApiError::new(
+                    "io_exec_failed",
+                    format!("rmdir {}: {e}", current.display()),
+                )
             })?;
 
         if !out.status.success() && current.exists() {
-            return Err(
-                ApiError::new(
-                    "io_remove_failed",
-                    format!(
-                        "remove {}: {}",
-                        current.display(),
-                        String::from_utf8_lossy(&out.stderr).trim()
-                    ),
-                )
-                .with_details(serde_json::json!({
-                    "path": current.display().to_string(),
-                    "exit_code": out.status.code(),
-                    "stdout": String::from_utf8_lossy(&out.stdout),
-                    "stderr": String::from_utf8_lossy(&out.stderr),
-                })),
-            );
+            return Err(ApiError::new(
+                "io_remove_failed",
+                format!(
+                    "remove {}: {}",
+                    current.display(),
+                    String::from_utf8_lossy(&out.stderr).trim()
+                ),
+            )
+            .with_details(serde_json::json!({
+                "path": current.display().to_string(),
+                "exit_code": out.status.code(),
+                "stdout": String::from_utf8_lossy(&out.stdout),
+                "stderr": String::from_utf8_lossy(&out.stderr),
+            })));
         }
         return Ok(());
     }

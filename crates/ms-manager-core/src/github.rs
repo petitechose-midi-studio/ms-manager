@@ -1,7 +1,7 @@
 use regex::Regex;
 use serde::Deserialize;
 
-use crate::channel::{parse_beta_tag, parse_nightly_tag, parse_stable_tag, Channel};
+use crate::channel::{Channel, parse_beta_tag, parse_nightly_tag, parse_stable_tag};
 use crate::error::Result;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

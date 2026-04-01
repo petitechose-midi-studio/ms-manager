@@ -2,8 +2,8 @@
 //!
 //! This crate is intentionally UI-agnostic and does not depend on Tauri.
 
-mod channel;
 mod bridge_instances;
+mod channel;
 mod controller_state;
 mod crypto;
 mod dist;
@@ -14,30 +14,30 @@ mod manifest;
 mod platform;
 mod settings;
 
-pub use channel::{compare_tags, is_tag_for_channel, BetaVersion, Channel, NightlyDate, SemVer};
 pub use bridge_instances::{
-    BridgeApp, BridgeInstanceBinding, BridgeInstancesState, BridgeMode, FirmwareTarget,
-    BRIDGE_INSTANCES_SCHEMA,
+    BRIDGE_INSTANCES_SCHEMA, BridgeApp, BridgeInstanceBinding, BridgeInstancesState, BridgeMode,
+    FirmwareTarget,
 };
-pub use controller_state::{ControllerState, LastFlashed, CONTROLLER_STATE_SCHEMA};
+pub use channel::{BetaVersion, Channel, NightlyDate, SemVer, compare_tags, is_tag_for_channel};
+pub use controller_state::{CONTROLLER_STATE_SCHEMA, ControllerState, LastFlashed};
 pub use crypto::{decode_b64_32, sha256_hex, verify_manifest_sig_b64};
 pub use dist::{
-    asset_url_for_tag, manifest_sig_url_for_tag, manifest_url_for_tag, public_key_b64_for_channel,
-    stable_latest_manifest_url, stable_latest_sig_url, DIST_REPO_SLUG, NIGHTLY_PUBLIC_KEY_B64,
-    STABLE_PUBLIC_KEY_B64,
+    DIST_REPO_SLUG, NIGHTLY_PUBLIC_KEY_B64, STABLE_PUBLIC_KEY_B64, asset_url_for_tag,
+    manifest_sig_url_for_tag, manifest_url_for_tag, public_key_b64_for_channel,
+    stable_latest_manifest_url, stable_latest_sig_url,
 };
 pub use error::{CoreError, Result};
 pub use github::{
-    extract_tags_from_releases_atom, latest_tag_for_channel, latest_tag_for_channel_from_releases,
-    parse_releases_api_json, ReleaseInfo,
+    ReleaseInfo, extract_tags_from_releases_atom, latest_tag_for_channel,
+    latest_tag_for_channel_from_releases, parse_releases_api_json,
 };
-pub use install_state::{InstallState, INSTALL_STATE_SCHEMA};
+pub use install_state::{INSTALL_STATE_SCHEMA, InstallState};
 pub use manifest::{
-    parse_manifest_json, select_default_assets, select_install_set_assets, Manifest, ManifestAsset,
-    ManifestChannel,
+    Manifest, ManifestAsset, ManifestChannel, parse_manifest_json, select_default_assets,
+    select_install_set_assets,
 };
 pub use platform::{Arch, Os, Platform};
-pub use settings::{ArtifactSource, Settings, SETTINGS_SCHEMA};
+pub use settings::{ArtifactSource, SETTINGS_SCHEMA, Settings};
 
 #[cfg(test)]
 mod tests {

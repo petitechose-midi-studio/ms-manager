@@ -36,9 +36,11 @@ pub async fn list_targets_with_loader(loader: &Path) -> ApiResult<Vec<DeviceTarg
 
     let mut cmd = tokio::process::Command::new(loader);
     process::no_console_window(&mut cmd);
-    let out = cmd.args(["list", "--json"]).output().await.map_err(|e| {
-        ApiError::new("io_exec_failed", format!("run loader list: {e}"))
-    })?;
+    let out = cmd
+        .args(["list", "--json"])
+        .output()
+        .await
+        .map_err(|e| ApiError::new("io_exec_failed", format!("run loader list: {e}")))?;
 
     if !out.status.success() {
         return Err(
@@ -128,7 +130,10 @@ mod tests {
     #[test]
     fn select_serial_target_returns_exact_match() {
         let target = select_serial_target(
-            &[serial_target("17081760", "COM3"), serial_target("17076520", "COM6")],
+            &[
+                serial_target("17081760", "COM3"),
+                serial_target("17076520", "COM6"),
+            ],
             "17076520",
         )
         .unwrap();
@@ -138,8 +143,8 @@ mod tests {
 
     #[test]
     fn select_serial_target_rejects_missing_serial() {
-        let err = select_serial_target(&[serial_target("17081760", "COM3")], "17076520")
-            .unwrap_err();
+        let err =
+            select_serial_target(&[serial_target("17081760", "COM3")], "17076520").unwrap_err();
 
         assert_eq!(err.code, "device_not_found");
     }

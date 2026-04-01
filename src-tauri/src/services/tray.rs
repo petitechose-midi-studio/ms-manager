@@ -35,8 +35,9 @@ pub fn install<R: Runtime>(app: &mut App<R>) -> tauri::Result<()> {
                     tokio::time::sleep(std::time::Duration::from_millis(250)).await;
 
                     let layout = app.state::<state::AppState>().layout_get();
-                    let exe = services::artifact_resolver::resolve_management_oc_bridge_exe(&layout)
-                        .unwrap_or_else(|_| services::payload::oc_bridge_path(&layout));
+                    let exe =
+                        services::artifact_resolver::resolve_management_oc_bridge_exe(&layout)
+                            .unwrap_or_else(|_| services::payload::oc_bridge_path(&layout));
                     let _ = services::bridge_process::kill_oc_bridge_daemons(&exe);
                     let _ = services::bridge_process::kill_all_oc_bridge_daemons();
 

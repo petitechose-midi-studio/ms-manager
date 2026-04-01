@@ -33,8 +33,12 @@ pub(crate) fn open_path_inner(target: &std::path::Path) -> ApiResult<()> {
     };
     cmd.arg(open_target);
 
-    cmd.spawn()
-        .map_err(|e| ApiError::new("open_failed", format!("open {}: {e}", open_target.display())))?;
+    cmd.spawn().map_err(|e| {
+        ApiError::new(
+            "open_failed",
+            format!("open {}: {e}", open_target.display()),
+        )
+    })?;
 
     Ok(())
 }

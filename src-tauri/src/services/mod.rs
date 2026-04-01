@@ -1,6 +1,6 @@
-pub mod assets;
 pub mod artifact_paths;
 pub mod artifact_resolver;
+pub mod assets;
 pub mod bridge;
 pub mod bridge_ctl;
 pub mod bridge_instances;
@@ -10,8 +10,8 @@ pub mod bridge_status;
 pub mod device;
 pub mod distribution;
 pub mod flash;
-pub mod installed_artifacts;
 pub mod install;
+pub mod installed_artifacts;
 pub mod manager_autostart;
 pub mod payload;
 pub mod process;

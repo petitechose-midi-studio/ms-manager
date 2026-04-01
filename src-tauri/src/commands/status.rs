@@ -15,7 +15,8 @@ pub async fn status_get(state: State<'_, AppState>) -> ApiResult<Status> {
 pub(crate) async fn status_get_internal(state: &AppState) -> ApiResult<Status> {
     let layout = state.layout_get();
     let installed = state.install_state_get();
-    let artifact_health = artifact_resolver::management_artifact_health(&layout, installed.as_ref());
+    let artifact_health =
+        artifact_resolver::management_artifact_health(&layout, installed.as_ref());
     let host_installed = artifact_health.ready;
 
     let bindings = state.bridge_instances_get();
@@ -32,7 +33,8 @@ pub(crate) async fn status_get_internal(state: &AppState) -> ApiResult<Status> {
         .await
     });
     let device_layout = layout.clone();
-    let device_task = tauri::async_runtime::spawn(async move { device::device_status(&device_layout).await });
+    let device_task =
+        tauri::async_runtime::spawn(async move { device::device_status(&device_layout).await });
     let bridge = bridge_task
         .await
         .map_err(|e| crate::api_error::ApiError::new("task_join_failed", e.to_string()))?;

@@ -40,13 +40,18 @@ fn default_true() -> bool {
 }
 
 pub fn load_workspace_artifacts() -> ApiResult<WorkspaceArtifacts> {
-    let path = dev_artifacts_path();
+    load_workspace_artifacts_from_path(&dev_artifacts_path())
+}
+
+fn load_workspace_artifacts_from_path(path: &Path) -> ApiResult<WorkspaceArtifacts> {
     let bytes = std::fs::read(&path).map_err(|e| {
         ApiError::new(
             "artifact_config_missing",
             format!("workspace artifact config not found: {}", path.display()),
         )
-        .with_details(serde_json::json!({ "path": path.display().to_string(), "io_error": e.to_string() }))
+        .with_details(
+            serde_json::json!({ "path": path.display().to_string(), "io_error": e.to_string() }),
+        )
     })?;
 
     let file: DevArtifactsFile = serde_json::from_slice(&bytes).map_err(|e| {
@@ -70,21 +75,38 @@ pub fn load_workspace_artifacts() -> ApiResult<WorkspaceArtifacts> {
 
     let root = path
         .parent()
-        .ok_or_else(|| ApiError::new("artifact_config_invalid", "workspace config has no parent directory"))?
+        .ok_or_else(|| {
+            ApiError::new(
+                "artifact_config_invalid",
+                "workspace config has no parent directory",
+            )
+        })?
         .to_path_buf();
 
     Ok(WorkspaceArtifacts {
-        config_path: path,
+        config_path: path.to_path_buf(),
         strict: file.strict,
-        oc_bridge_exe: resolve_declared_path(&root, &file.artifacts.oc_bridge_exe, "oc_bridge_exe")?,
+        oc_bridge_exe: resolve_declared_path(
+            &root,
+            &file.artifacts.oc_bridge_exe,
+            "oc_bridge_exe",
+        )?,
         loader_exe: resolve_declared_path(&root, &file.artifacts.loader_exe, "loader_exe")?,
         firmware_standalone: resolve_declared_path(
             &root,
             &file.artifacts.firmware_standalone,
             "firmware_standalone",
         )?,
-        firmware_bitwig: resolve_declared_path(&root, &file.artifacts.firmware_bitwig, "firmware_bitwig")?,
-        bitwig_extension: resolve_declared_path(&root, &file.artifacts.bitwig_extension, "bitwig_extension")?,
+        firmware_bitwig: resolve_declared_path(
+            &root,
+            &file.artifacts.firmware_bitwig,
+            "firmware_bitwig",
+        )?,
+        bitwig_extension: resolve_declared_path(
+            &root,
+            &file.artifacts.bitwig_extension,
+            "bitwig_extension",
+        )?,
     })
 }
 
@@ -95,15 +117,12 @@ pub fn workspace_artifact_health() -> ArtifactHealth {
                 ("firmware_standalone", &workspace.firmware_standalone),
                 ("firmware_bitwig", &workspace.firmware_bitwig),
             ] {
-                if !path.exists() {
+                if let Err(err) = ensure_file_exists(key, path) {
                     return ArtifactHealth {
                         source: ArtifactSource::Workspace,
                         ready: false,
-                        config_path: Some(workspace.config_path),
-                        message: Some(format!(
-                            "workspace artifact missing for {key}: {}",
-                            path.display()
-                        )),
+                        config_path: Some(workspace.config_path.clone()),
+                        message: Some(err.message),
                     };
                 }
             }
@@ -131,21 +150,19 @@ pub fn workspace_artifact_health() -> ArtifactHealth {
 pub fn workspace_artifact_health_for_target(target: FirmwareTarget) -> ArtifactHealth {
     match load_workspace_artifacts() {
         Ok(workspace) => {
-            let firmware = match target {
-                FirmwareTarget::Standalone => &workspace.firmware_standalone,
-                FirmwareTarget::Bitwig => &workspace.firmware_bitwig,
+            let (key, firmware) = match target {
+                FirmwareTarget::Standalone => {
+                    ("firmware_standalone", &workspace.firmware_standalone)
+                }
+                FirmwareTarget::Bitwig => ("firmware_bitwig", &workspace.firmware_bitwig),
             };
 
-            if !firmware.exists() {
+            if let Err(err) = ensure_file_exists(key, firmware) {
                 return ArtifactHealth {
                     source: ArtifactSource::Workspace,
                     ready: false,
-                    config_path: Some(workspace.config_path),
-                    message: Some(format!(
-                        "workspace firmware missing for target '{}': {}",
-                        target.profile_id(),
-                        firmware.display()
-                    )),
+                    config_path: Some(workspace.config_path.clone()),
+                    message: Some(err.message),
                 };
             }
 
@@ -185,6 +202,51 @@ fn resolve_declared_path(root: &Path, raw: &str, key: &str) -> ApiResult<PathBuf
         root.join(candidate)
     };
 
-    ensure_file_exists(key, &path)?;
     Ok(std::fs::canonicalize(&path).unwrap_or(path))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn unique_test_dir(label: &str) -> PathBuf {
+        let suffix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("ms-manager-{label}-{suffix}"))
+    }
+
+    #[test]
+    fn load_workspace_artifacts_keeps_declared_paths_when_files_are_missing() {
+        let root = unique_test_dir("workspace-artifacts");
+        let config_path = root.join("dev-artifacts.local.json");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(
+            &config_path,
+            r#"{
+  "schema": 1,
+  "strict": true,
+  "artifacts": {
+    "oc_bridge_exe": "tools/oc-bridge.exe",
+    "loader_exe": "tools/loader.exe",
+    "firmware_standalone": "firmware/standalone/firmware.hex",
+    "firmware_bitwig": "firmware/bitwig/firmware.hex",
+    "bitwig_extension": "host/midi_studio.bwextension"
+  }
+}"#,
+        )
+        .unwrap();
+
+        let workspace = load_workspace_artifacts_from_path(&config_path).unwrap();
+
+        assert_eq!(
+            workspace.firmware_standalone,
+            root.join("firmware/standalone/firmware.hex")
+        );
+        assert_eq!(
+            workspace.firmware_bitwig,
+            root.join("firmware/bitwig/firmware.hex")
+        );
+    }
 }

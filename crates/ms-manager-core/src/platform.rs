@@ -52,7 +52,7 @@ impl Platform {
                 return Err(CoreError::UnsupportedPlatform {
                     os: other.to_string(),
                     arch: std::env::consts::ARCH.to_string(),
-                })
+                });
             }
         };
 
@@ -63,7 +63,7 @@ impl Platform {
                 return Err(CoreError::UnsupportedPlatform {
                     os: std::env::consts::OS.to_string(),
                     arch: other.to_string(),
-                })
+                });
             }
         };
 

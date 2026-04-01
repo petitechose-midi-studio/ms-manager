@@ -14,14 +14,45 @@ pub fn ensure_file_exists(key: &str, path: &Path) -> ApiResult<()> {
         return Ok(());
     }
 
+    let message = missing_artifact_message(key, path);
+
     Err(ApiError::new(
         "artifact_missing",
-        format!("artifact '{key}' not found: {}", path.display()),
+        message,
     )
     .with_details(serde_json::json!({
         "artifact": key,
         "path": path.display().to_string(),
     })))
+}
+
+fn missing_artifact_message(key: &str, path: &Path) -> String {
+    let base = format!("artifact '{key}' not found: {}", path.display());
+
+    if path.extension().and_then(|ext| ext.to_str()) != Some("hex") {
+        return base;
+    }
+
+    let Some(parent) = path.parent() else {
+        return base;
+    };
+
+    let idedata = parent.join("idedata.json");
+    let elf = parent.join("firmware.elf");
+
+    if idedata.exists() && elf.exists() {
+        return format!(
+            "{base} (PlatformIO metadata and firmware.elf are present, but midi-studio-loader requires an Intel HEX file)"
+        );
+    }
+
+    if idedata.exists() {
+        return format!(
+            "{base} (PlatformIO environment exists, but the HEX artifact was not generated)"
+        );
+    }
+
+    base
 }
 
 pub fn ui_path_string(path: &Path) -> String {

@@ -44,7 +44,8 @@ impl ControllerState {
         instance_id: impl Into<String>,
         next: LastFlashed,
     ) {
-        self.last_flashed_by_instance.insert(instance_id.into(), next);
+        self.last_flashed_by_instance
+            .insert(instance_id.into(), next);
     }
 }
 
