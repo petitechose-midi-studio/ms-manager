@@ -106,6 +106,25 @@ impl AppState {
         Ok(s.clone())
     }
 
+    pub fn settings_get(&self) -> Settings {
+        self.settings.lock().unwrap().clone()
+    }
+
+    pub fn settings_set_tab_order(&self, tab_order: Vec<String>) -> ApiResult<Settings> {
+        let tab_order = normalize_tab_order(tab_order);
+
+        let mut s = self.settings.lock().unwrap();
+        if s.tab_order != tab_order {
+            s.tab_order = tab_order;
+        }
+        if s.schema != SETTINGS_SCHEMA {
+            s.schema = SETTINGS_SCHEMA;
+        }
+
+        write_json_atomic(&self.settings_path, &*s)?;
+        Ok(s.clone())
+    }
+
     pub fn install_state_get(&self) -> Option<InstallState> {
         self.install_state.lock().unwrap().clone()
     }
@@ -385,4 +404,54 @@ fn migrate_controller_state(
 
     controller_state.last_flashed = None;
     controller_state
+}
+
+fn normalize_tab_order(tab_order: Vec<String>) -> Vec<String> {
+    let mut normalized = Vec::new();
+
+    for value in tab_order {
+        let value = value.trim();
+        if value.is_empty() || normalized.iter().any(|existing| existing == value) {
+            continue;
+        }
+        normalized.push(value.to_string());
+    }
+
+    normalized
+}
+
+#[cfg(test)]
+mod tests {
+    use super::normalize_tab_order;
+
+    #[test]
+    fn normalize_tab_order_drops_empty_values_and_duplicates() {
+        let normalized = normalize_tab_order(vec![
+            "".to_string(),
+            "  ".to_string(),
+            "instance-a".to_string(),
+            "instance-a".to_string(),
+            " instance-b ".to_string(),
+        ]);
+
+        assert_eq!(normalized, vec!["instance-a".to_string(), "instance-b".to_string()]);
+    }
+
+    #[test]
+    fn normalize_tab_order_preserves_first_seen_order() {
+        let normalized = normalize_tab_order(vec![
+            "instance-b".to_string(),
+            "instance-a".to_string(),
+            "instance-c".to_string(),
+        ]);
+
+        assert_eq!(
+            normalized,
+            vec![
+                "instance-b".to_string(),
+                "instance-a".to_string(),
+                "instance-c".to_string(),
+            ]
+        );
+    }
 }

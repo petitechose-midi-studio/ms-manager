@@ -1,5 +1,10 @@
 <script lang="ts">
   import type { BridgeInstanceStatus } from "$lib/api/types";
+  import {
+    formatEnvironmentLabel,
+    formatLastFlashLabel,
+    formatTargetLabel,
+  } from "$lib/ui/instance/firmwarePresentation";
 
   export let instance: BridgeInstanceStatus;
   export let fallbackName: string;
@@ -13,18 +18,6 @@
   export let onOpenLogs: () => void;
   export let onToggleEnabled: () => void;
   export let onRemove: () => void;
-
-  function fmtSourceLabel(source: string): string {
-    if (source === "installed") return "Installed";
-    if (source === "workspace") return "Workspace";
-    return source;
-  }
-
-  function fmtTargetLabel(target: string): string {
-    if (target === "standalone") return "Standalone";
-    if (target === "bitwig") return "Bitwig";
-    return target;
-  }
 
   function fmtInstanceState(instance: {
     enabled: boolean;
@@ -61,9 +54,9 @@
         <button
           class="instanceTitleButton"
           type="button"
-          title="Rename instance"
+          title="Double-click to rename instance"
           disabled={busy}
-          onclick={onBeginRename}
+          ondblclick={onBeginRename}
         >
           {instance.display_name?.trim() || fallbackName}
         </button>
@@ -74,11 +67,12 @@
       · Port: {fmtPort(instance.resolved_serial_port)}
       · Bridge Port: {instance.host_udp_port}
     </div>
+    <div class="instanceSubMeta">{formatLastFlashLabel(instance.last_flashed)}</div>
   </div>
   <div class="instanceHeaderSide">
     <div class="pillRow">
       <div class="configPill">
-        {fmtSourceLabel(instance.artifact_source)} / {fmtTargetLabel(instance.target)}
+        {formatEnvironmentLabel(instance.artifact_source)} / {formatTargetLabel(instance.target)}
       </div>
       <div class="statePill" data-running={instance.running}>
         {fmtInstanceState(instance)}
@@ -98,19 +92,19 @@
   .instanceHeader {
     display: flex;
     justify-content: space-between;
-    gap: 12px;
+    gap: var(--space-4);
     align-items: flex-start;
   }
 
   .instanceHeaderMain {
     display: grid;
-    gap: 8px;
+    gap: var(--space-2);
     min-width: 0;
   }
 
   .instanceHeaderSide {
     display: grid;
-    gap: 8px;
+    gap: var(--space-2);
     justify-items: end;
   }
 
@@ -125,7 +119,7 @@
     line-height: 22px;
     padding: 0;
     margin: 0;
-    cursor: text;
+    cursor: default;
     text-align: left;
     max-width: 100%;
     overflow: hidden;
@@ -137,10 +131,15 @@
     color: var(--value);
   }
 
+  .instanceTitleButton:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+  }
+
   .titleRow {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: var(--space-3);
     min-width: 0;
   }
 
@@ -149,14 +148,19 @@
     width: 100%;
     min-width: 0;
     max-width: 360px;
-    border: 1px solid var(--border);
-    background: var(--panel);
+    border: 0;
+    background: transparent;
     color: var(--fg);
-    border-radius: 6px;
-    padding: 8px 10px;
+    border-radius: 0;
+    padding: 0;
     font: inherit;
     font-family: var(--font-sans);
-    font-weight: 500;
+    font-weight: 700;
+    font-size: 18px;
+    line-height: 22px;
+    outline: none;
+    box-shadow: none;
+    caret-color: var(--fg);
   }
 
   .titleInput:disabled {
@@ -172,10 +176,18 @@
     overflow-wrap: anywhere;
   }
 
+  .instanceSubMeta {
+    color: color-mix(in srgb, var(--muted) 88%, transparent);
+    font-size: 11px;
+    line-height: 15px;
+    font-family: var(--font-sans);
+    overflow-wrap: anywhere;
+  }
+
   .pillRow {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--space-2);
     flex-wrap: wrap;
     justify-content: flex-end;
   }
@@ -191,7 +203,7 @@
     letter-spacing: 0.06em;
     border: 1px solid var(--border);
     border-radius: 999px;
-    padding: 4px 10px;
+    padding: var(--pill-padding-y) var(--pill-padding-x);
     white-space: nowrap;
   }
 
@@ -203,8 +215,9 @@
   .mini {
     appearance: none;
     font: inherit;
-    padding: 7px 9px;
-    border-radius: 6px;
+    padding: 7px var(--control-padding-x);
+    min-height: var(--control-height);
+    border-radius: var(--control-radius);
     border: 1px solid var(--border);
     background: transparent;
     color: var(--muted);

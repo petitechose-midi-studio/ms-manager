@@ -1,16 +1,27 @@
 <script lang="ts">
-  import type { DeviceStatus, Platform } from "$lib/api/types";
+  import type { DeviceStatus, MidiInventoryStatus, Platform } from "$lib/api/types";
   import ControllerStatus from "$lib/ui/ControllerStatus.svelte";
+  import MidiInventoryOverviewBadge from "$lib/ui/MidiInventoryOverviewBadge.svelte";
   export let device: DeviceStatus;
+  export let midiInventory: MidiInventoryStatus | null = null;
+  export let loadingMidiInventory = false;
+  export let midiLinkLabelsBySerial: Record<string, string> = {};
   export let platform: Platform | null;
 
   export let appUpdateAvailable: boolean;
   export let appUpdateLabel: string | null;
+  export let onRefreshMidiInventory: () => void = () => {};
 </script>
 
 <header class="bar">
   <div class="title">
     <span class="app">MIDI Studio Manager</span>
+    <MidiInventoryOverviewBadge
+      inventory={midiInventory}
+      loading={loadingMidiInventory}
+      linkLabelsBySerial={midiLinkLabelsBySerial}
+      onRefresh={onRefreshMidiInventory}
+    />
   </div>
 
   <div class="meta">
@@ -41,8 +52,8 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    gap: 12px;
-    padding: 6px 2px;
+    gap: var(--space-4);
+    padding: var(--space-1) 2px;
     font-family: var(--font-sans);
   }
 
@@ -53,9 +64,16 @@
     color: var(--value);
   }
 
+  .title {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-4);
+    flex-wrap: wrap;
+  }
+
   .meta {
     display: flex;
-    gap: 10px;
+    gap: var(--space-3);
     align-items: center;
     flex-wrap: wrap;
     justify-content: flex-end;

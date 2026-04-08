@@ -68,6 +68,7 @@ pub struct Status {
     pub artifact_source: ArtifactSource,
     pub artifact_config_path: Option<String>,
     pub artifact_message: Option<String>,
+    pub tab_order: Vec<String>,
     pub platform: Platform,
     pub payload_root: String,
     pub device: DeviceStatus,
@@ -86,6 +87,9 @@ pub struct BridgeInstanceBindRequest {
     pub controller_serial: String,
     pub controller_vid: u32,
     pub controller_pid: u32,
+    pub target: ms_manager_core::FirmwareTarget,
+    pub artifact_source: ms_manager_core::ArtifactSource,
+    pub installed_channel: Option<Channel>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -118,6 +122,16 @@ pub struct BridgeInstanceBindingResponse {
     pub binding: BridgeInstanceBinding,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TabOrderSetRequest {
+    pub instance_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TabOrderResponse {
+    pub tab_order: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct AppUpdateInfo {
     pub version: String,
@@ -139,6 +153,61 @@ pub struct DeviceStatus {
     pub connected: bool,
     pub count: u32,
     pub targets: Vec<DeviceTarget>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MidiInventoryProvider {
+    WindowsMidiServices,
+    Winmm,
+    Alsa,
+    CoreMidi,
+    None,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MidiPortDirection {
+    Input,
+    Output,
+    Bidirectional,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MidiMatchConfidence {
+    Strong,
+    Weak,
+    None,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MidiPortMatch {
+    pub controller_serial: Option<String>,
+    pub confidence: MidiMatchConfidence,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MidiPortInfo {
+    pub id: String,
+    pub provider: MidiInventoryProvider,
+    pub name: String,
+    pub direction: MidiPortDirection,
+    pub manufacturer: Option<String>,
+    pub serial_number: Option<String>,
+    pub vid: Option<u32>,
+    pub pid: Option<u32>,
+    pub system_device_id: Option<String>,
+    pub match_info: MidiPortMatch,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MidiInventoryStatus {
+    pub provider: MidiInventoryProvider,
+    pub available: bool,
+    pub ports: Vec<MidiPortInfo>,
+    pub notes: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -204,10 +273,21 @@ pub enum FlashEvent {
         tag: String,
         profile: String,
     },
+    Message {
+        level: FlashMessageLevel,
+        message: String,
+    },
     Output {
         line: String,
     },
     Done {
         ok: bool,
     },
+}
+
+#[derive(Debug, Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FlashMessageLevel {
+    Info,
+    Warn,
 }

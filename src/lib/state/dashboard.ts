@@ -85,9 +85,20 @@ export function createDashboard(activity: Activity) {
   }
 
   async function start() {
+    function deviceSignatureOf(device: { targets?: { target_id: string; serial_number?: string | null }[] }) {
+      return JSON.stringify(
+        (device.targets ?? [])
+          .map((target) => `${target.target_id}:${target.serial_number ?? ""}`)
+          .sort(),
+      );
+    }
+
+    let lastDeviceSignature = "";
+
     activity.add("info", "ui", "boot");
     try {
       await status.refreshStatus();
+      lastDeviceSignature = deviceSignatureOf(get(state).device);
       void status.checkAppUpdate();
     } catch (error) {
       activity.add("error", "ui", "boot failed", error);
@@ -101,7 +112,31 @@ export function createDashboard(activity: Activity) {
     });
 
     const unlistenFlash = await listen<FlashEvent>(FLASH_EVENT, (event) => {
-      state.update((current) => ({ ...current, now: nowFromFlash(event.payload) }));
+      const payload = event.payload;
+      if (payload.type === "message") {
+        if (payload.level === "warn") {
+          activity.add("warn", "flash", payload.message);
+        }
+        state.update((current) => ({
+          ...current,
+          now: nowFromFlash(payload),
+          flashNotice:
+            payload.level === "warn"
+              ? {
+                  instanceId: current.flashingInstanceId,
+                  level: "warn",
+                  message: payload.message,
+                }
+              : current.flashNotice,
+        }));
+        return;
+      }
+
+      state.update((current) => ({
+        ...current,
+        now: nowFromFlash(payload),
+        flashNotice: payload.type === "begin" ? null : current.flashNotice,
+      }));
     });
 
     const unlistenBridgeLog = await listen<DashboardBridgeLogEvent>(BRIDGE_LOG_EVENT, (event) => {
@@ -114,7 +149,13 @@ export function createDashboard(activity: Activity) {
       devicePolling = true;
       try {
         const device = await deviceStatusGet();
+        const nextSignature = deviceSignatureOf(device);
+        const changed = nextSignature !== lastDeviceSignature;
+        lastDeviceSignature = nextSignature;
         state.update((current) => ({ ...current, device }));
+        if (changed) {
+          void status.refreshMidiInventory({ log: false });
+        }
       } finally {
         devicePolling = false;
       }

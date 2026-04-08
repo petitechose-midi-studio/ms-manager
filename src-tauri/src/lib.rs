@@ -49,8 +49,11 @@ pub fn run() {
             commands::device::device_status_get,
             commands::flash::flash_bridge_instance,
             commands::install::install_bridge_instance,
+            commands::midi::midi_inventory_get,
             commands::payload::path_open,
             commands::payload::payload_root_relocate,
+            commands::payload::url_open,
+            commands::settings::tab_order_set,
             commands::status::status_get,
         ])
         .build(tauri::generate_context!())

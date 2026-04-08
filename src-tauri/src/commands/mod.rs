@@ -5,5 +5,7 @@ pub mod device;
 pub mod distribution;
 pub mod flash;
 pub mod install;
+pub mod midi;
 pub mod payload;
+pub mod settings;
 pub mod status;

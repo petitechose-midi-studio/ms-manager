@@ -14,6 +14,8 @@ pub struct Settings {
     pub schema: u32,
     #[serde(default)]
     pub payload_root_override: Option<String>,
+    #[serde(default)]
+    pub tab_order: Vec<String>,
 }
 
 impl Default for Settings {
@@ -21,6 +23,7 @@ impl Default for Settings {
         Self {
             schema: SETTINGS_SCHEMA,
             payload_root_override: None,
+            tab_order: Vec::new(),
         }
     }
 }

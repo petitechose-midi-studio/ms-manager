@@ -12,13 +12,16 @@ import {
   flashBridgeInstance,
   installBridgeInstance,
   payloadRootRelocate,
+  tabOrderSet,
 } from "$lib/api/client";
 import type { Channel } from "$lib/api/types";
 import {
   applyStatus,
+  bindPresetDefaults,
   clearApiError,
   setApiError,
   type DashboardArtifactSource,
+  type DashboardBindPreset,
   type DashboardBindTarget,
   type DashboardBridgeMode,
   type DashboardFirmwareTarget,
@@ -101,7 +104,12 @@ export function createDashboardMutationController({
   }
 
   async function flashInstance(instanceId: string) {
-    state.update((current) => ({ ...current, flashing: true, flashingInstanceId: instanceId }));
+    state.update((current) => ({
+      ...current,
+      flashing: true,
+      flashingInstanceId: instanceId,
+      flashNotice: null,
+    }));
     clearApiError(state);
     activity.add("info", "flash", `flash start instance=${instanceId}`);
     try {
@@ -115,9 +123,14 @@ export function createDashboardMutationController({
     }
   }
 
-  async function bindHardwareBridge(target: DashboardBindTarget, mode: DashboardBridgeMode = "hardware") {
+  async function bindHardwareBridge(
+    target: DashboardBindTarget,
+    mode: DashboardBridgeMode = "hardware",
+    preset: DashboardBindPreset = "standalone",
+  ) {
     const controllerSerial = target.serial_number?.trim();
     if (!controllerSerial) return null;
+    const defaults = bindPresetDefaults(preset);
 
     state.update((current) => ({ ...current, bridgeMutating: true }));
     clearApiError(state);
@@ -129,6 +142,9 @@ export function createDashboardMutationController({
         controller_serial: controllerSerial,
         controller_vid: target.vid,
         controller_pid: target.pid,
+        target: defaults.target,
+        artifact_source: defaults.artifactSource,
+        installed_channel: defaults.installedChannel,
       });
       await refreshStatus();
       activity.add("ok", "bridge", `bridge bound serial=${controllerSerial}`);
@@ -247,6 +263,16 @@ export function createDashboardMutationController({
     }
   }
 
+  async function setTabOrder(instanceIds: string[]) {
+    clearApiError(state);
+    try {
+      const result = await tabOrderSet({ instance_ids: instanceIds });
+      state.update((current) => ({ ...current, tabOrder: result.tab_order }));
+    } catch (error) {
+      setApiError(state, activity, error);
+    }
+  }
+
   function setActiveBridgeInstance(instanceId: string | null) {
     activity.retain((entry) => {
       if (entry.scope !== "bridge") return true;
@@ -287,6 +313,7 @@ export function createDashboardMutationController({
     setBridgeArtifactSource,
     setBridgeInstalledRelease,
     setBridgeDisplayName,
+    setTabOrder,
     setActiveBridgeInstance,
     toggleActivity,
     setActivityFilter,

@@ -17,6 +17,22 @@ pub fn path_open(path: String) -> ApiResult<()> {
     open_path_inner(&path)
 }
 
+#[tauri::command]
+pub fn url_open(url: String) -> ApiResult<()> {
+    let url = url.trim().to_string();
+    if url.is_empty() {
+        return Err(ApiError::new("url_invalid", "url cannot be empty"));
+    }
+    if !matches!(url.split(':').next(), Some("https") | Some("http")) {
+        return Err(ApiError::new(
+            "url_invalid",
+            "only http and https URLs are supported",
+        ));
+    }
+
+    open_target_inner(url.as_str(), &url)
+}
+
 pub(crate) fn open_path_inner(target: &std::path::Path) -> ApiResult<()> {
     let open_target = if target.is_file() {
         target.parent().unwrap_or(target)
@@ -24,6 +40,10 @@ pub(crate) fn open_path_inner(target: &std::path::Path) -> ApiResult<()> {
         target
     };
 
+    open_target_inner(open_target.as_os_str(), &open_target.display().to_string())
+}
+
+fn open_target_inner(target: impl AsRef<std::ffi::OsStr>, display_target: &str) -> ApiResult<()> {
     let mut cmd = if cfg!(windows) {
         std::process::Command::new("explorer")
     } else if cfg!(target_os = "macos") {
@@ -31,13 +51,10 @@ pub(crate) fn open_path_inner(target: &std::path::Path) -> ApiResult<()> {
     } else {
         std::process::Command::new("xdg-open")
     };
-    cmd.arg(open_target);
+    cmd.arg(target);
 
     cmd.spawn().map_err(|e| {
-        ApiError::new(
-            "open_failed",
-            format!("open {}: {e}", open_target.display()),
-        )
+        ApiError::new("open_failed", format!("open {display_target}: {e}"))
     })?;
 
     Ok(())

@@ -75,12 +75,38 @@ pub fn select_serial_target(targets: &[DeviceTarget], serial: &str) -> ApiResult
         0 => Err(ApiError::new(
             "device_not_found",
             format!("no connected device matches serial {serial}"),
-        )),
+        )
+        .with_details(serde_json::json!({
+            "controller_serial": serial,
+            "available_targets": summarize_targets(targets),
+        }))),
         count => Err(ApiError::new(
             "device_ambiguous",
             format!("{count} connected devices match serial {serial}"),
-        )),
+        )
+        .with_details(serde_json::json!({
+            "controller_serial": serial,
+            "match_count": count,
+            "matching_targets": summarize_targets(&matches),
+            "available_targets": summarize_targets(targets),
+        }))),
     }
+}
+
+fn summarize_targets(targets: &[DeviceTarget]) -> Vec<serde_json::Value> {
+    targets
+        .iter()
+        .map(|target| {
+            serde_json::json!({
+                "target_id": target.target_id,
+                "kind": target.kind,
+                "port_name": target.port_name,
+                "path": target.path,
+                "serial_number": target.serial_number,
+                "product": target.product,
+            })
+        })
+        .collect()
 }
 
 fn parse_list_event(json_line: &str) -> (u32, Vec<DeviceTarget>) {

@@ -1,9 +1,12 @@
 <script lang="ts">
   import type { DeviceTarget } from "$lib/api/types";
+  import ChoiceDropdown from "$lib/ui/ChoiceDropdown.svelte";
 
   export let target: DeviceTarget;
   export let busy = false;
-  export let onCreate: () => void;
+  export let onCreate: (preset: "standalone" | "bitwig") => void;
+
+  let bindPreset: "standalone" | "bitwig" = "standalone";
 
   function unboundName(target: { product?: string | null; serial_number?: string | null }): string {
     return target.product?.trim() || `Controller ${target.serial_number ?? ""}`.trim();
@@ -43,9 +46,28 @@
   </div>
 
   <div class="card">
-    <div class="cardTitle">Actions</div>
+    <div class="cardTitle">Create Instance</div>
+    <div class="field">
+      <ChoiceDropdown
+        label="Initial Preset"
+        value={bindPreset}
+        options={[
+          { value: "standalone", label: "Standalone", icon: "controller" },
+          { value: "bitwig", label: "Bitwig", icon: "bitwig" },
+        ]}
+        disabled={busy}
+        onChange={(value) => (bindPreset = value === "bitwig" ? "bitwig" : "standalone")}
+      />
+    </div>
+    <div class="muted">
+      {#if bindPreset === "standalone"}
+        Recommended default. Creates the instance ready for standalone firmware from the workspace.
+      {:else}
+        Creates the instance ready for Bitwig firmware from installed releases.
+      {/if}
+    </div>
     <div class="actions">
-      <button class="btn primary" type="button" disabled={busy} onclick={onCreate}>
+      <button class="btn primary" type="button" disabled={busy} onclick={() => onCreate(bindPreset)}>
         Create Instance
       </button>
     </div>
@@ -159,6 +181,11 @@
     color: var(--muted);
     font-size: 12px;
     line-height: 16px;
+  }
+
+  .field {
+    display: grid;
+    gap: 8px;
   }
 
   .actions {

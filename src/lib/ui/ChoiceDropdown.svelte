@@ -11,16 +11,17 @@
   import ControllerIcon from "$lib/ui/icons/ControllerIcon.svelte";
 
   export let label = "";
-  export let value: string;
+  export let value: string | null | undefined;
   export let disabled = false;
   export let options: ChoiceOption[] = [];
+  export let placeholder = "";
   export let onChange: (next: string) => void;
 
   let open = false;
   let rootEl: HTMLDivElement | null = null;
   let selectedOption: ChoiceOption | undefined;
 
-  $: selectedOption = options.find((option) => option.value === value) ?? options[0];
+  $: selectedOption = options.find((option) => option.value === value);
 
   function toggleOpen() {
     if (disabled) return;
@@ -77,7 +78,9 @@
           {/if}
         </span>
       {/if}
-      <span class="currentLabel">{selectedOption?.label ?? ""}</span>
+      <span class:placeholder={!selectedOption && !!placeholder} class="currentLabel">
+        {selectedOption?.label ?? placeholder}
+      </span>
       <span class="chevron" aria-hidden="true">
         <svg viewBox="0 0 12 12" focusable="false">
           <path d="M2.25 4.25 6 8l3.75-3.75" />
@@ -114,7 +117,7 @@
 <style>
   .wrap {
     display: grid;
-    gap: 8px;
+    gap: var(--space-2);
     min-width: 220px;
   }
 
@@ -138,7 +141,7 @@
     width: 100%;
     background: var(--panel);
     color: var(--fg);
-    border-radius: 6px;
+    border-radius: var(--control-radius);
     font: inherit;
     font-family: var(--font-sans);
     cursor: pointer;
@@ -149,11 +152,11 @@
   }
 
   .trigger {
-    min-height: 40px;
-    padding: 8px 10px;
+    min-height: var(--control-height);
+    padding: 8px var(--control-padding-x);
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--space-2);
   }
 
   .trigger:disabled {
@@ -186,6 +189,10 @@
     text-align: left;
   }
 
+  .currentLabel.placeholder {
+    color: var(--muted);
+  }
+
   .chevron {
     color: var(--muted);
   }
@@ -205,21 +212,21 @@
     inset: calc(100% + 6px) 0 auto 0;
     z-index: 20;
     display: grid;
-    gap: 6px;
-    padding: 6px;
+    gap: var(--space-1);
+    padding: var(--space-1);
     border: 1px solid var(--border-strong);
-    border-radius: 8px;
+    border-radius: var(--radius-card);
     background: var(--panel);
     box-shadow: 0 12px 32px rgba(0, 0, 0, 0.24);
   }
 
   .item {
     border: 1px solid transparent;
-    min-height: 38px;
-    padding: 8px 10px;
+    min-height: calc(var(--control-height) - 2px);
+    padding: 8px var(--control-padding-x);
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: var(--space-2);
     text-align: left;
     color: color-mix(in srgb, var(--fg) 68%, transparent);
     transition:

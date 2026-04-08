@@ -15,8 +15,9 @@
   import type { ControllerTabItem } from "$lib/ui/instance/InstanceTabs.svelte";
   import InstanceHeader from "$lib/ui/instance/InstanceHeader.svelte";
   import InstanceConfigurationCard from "$lib/ui/instance/InstanceConfigurationCard.svelte";
-  import InstanceActionsCard from "$lib/ui/instance/InstanceActionsCard.svelte";
   import UnboundControllerView from "$lib/ui/instance/UnboundControllerView.svelte";
+  import { apiErrorSuggestedActions, sortInstanceIdsByTabOrder } from "$lib/state/dashboard_shared";
+  import { formatSelectedFirmwareLabel, formatTargetLabel } from "$lib/ui/instance/firmwarePresentation";
 
   const activity = createActivityLog(1000);
   const dash = createDashboard(activity);
@@ -26,15 +27,21 @@
   let cleanup: (() => void) | null = null;
   let activeTabKey: string | null = null;
   let lastTagsChannel: "stable" | "beta" | "nightly" | null = null;
-  let nameDraft = "";
-  let nameDraftKey: string | null = null;
-  let renamingInstanceId: string | null = null;
+  let detailNameDraft = "";
+  let detailNameDraftKey: string | null = null;
+  let detailRenamingInstanceId: string | null = null;
+  let tabNameDraft = "";
+  let tabNameDraftKey: string | null = null;
+  let tabRenamingInstanceId: string | null = null;
 
   onMount(() => {
     void (async () => {
       try {
         const win = getCurrentWindow();
-        await win.setMinSize(new LogicalSize(720, 520));
+        const width = Math.max(600, Math.round(window.screen.availWidth / 3));
+        const height = Math.round(window.screen.availHeight * (2 / 3));
+        await win.setMinSize(new LogicalSize(600, 520));
+        await win.setSize(new LogicalSize(width, height));
       } catch {
         // ignore
       }
@@ -49,17 +56,11 @@
     };
   });
 
-  function fmtTargetLabel(target: string): string {
-    if (target === "standalone") return "Standalone";
-    if (target === "bitwig") return "Bitwig";
-    return target;
-  }
-
   function fallbackInstanceName(instance: {
     configured_serial: string;
     target: string;
   }): string {
-    return `${fmtTargetLabel(instance.target)} ${instance.configured_serial}`;
+    return `${formatTargetLabel(instance.target)} ${instance.configured_serial}`;
   }
 
   function unboundName(target: { product?: string | null; serial_number?: string | null }): string {
@@ -73,8 +74,17 @@
   $: unboundSerialTargets = serialTargets.filter(
     (target) => !boundSerials.has(target.serial_number ?? "")
   );
+  $: orderedInstanceIds = sortInstanceIdsByTabOrder(
+    $dashState.bridge.instances.map((instance) => instance.instance_id),
+    $dashState.tabOrder
+  );
+  $: orderedInstances = orderedInstanceIds
+    .map((instanceId) =>
+      $dashState.bridge.instances.find((instance) => instance.instance_id === instanceId) ?? null
+    )
+    .filter((instance) => !!instance);
   $: controllerTabs = [
-    ...$dashState.bridge.instances.map(
+    ...orderedInstances.map(
       (instance) =>
         ({
           key: `instance:${instance.instance_id}`,
@@ -96,6 +106,9 @@
         }) satisfies ControllerTabItem
     ),
   ];
+  $: midiLinkLabelsBySerial = Object.fromEntries(
+    controllerTabs.map((tab) => [tab.serial, tab.label])
+  );
   $: if (controllerTabs.length > 0 && !controllerTabs.some((tab) => tab.key === activeTabKey)) {
     activeTabKey = controllerTabs[0].key;
   }
@@ -122,18 +135,24 @@
       ? (activeInstance.installed_pinned_tag ?? "")
       : "";
   $: activeTagOptions = [
-    { value: "", label: "latest" },
+    { value: "", label: "Latest" },
     ...$dashState.tags.map((tag) => ({ value: tag, label: tag })),
   ];
   $: if (activeInstance) {
     const nextDraft = activeInstance.display_name?.trim() || "";
-    if (nameDraftKey !== activeInstance.instance_id) {
-      nameDraftKey = activeInstance.instance_id;
-      nameDraft = nextDraft;
+    if (detailNameDraftKey !== activeInstance.instance_id && detailRenamingInstanceId !== activeInstance.instance_id) {
+      detailNameDraftKey = activeInstance.instance_id;
+      detailNameDraft = nextDraft;
+    }
+    if (tabNameDraftKey !== activeInstance.instance_id && tabRenamingInstanceId !== activeInstance.instance_id) {
+      tabNameDraftKey = activeInstance.instance_id;
+      tabNameDraft = nextDraft;
     }
   } else {
-    nameDraftKey = null;
-    nameDraft = "";
+    detailNameDraftKey = null;
+    detailNameDraft = "";
+    tabNameDraftKey = null;
+    tabNameDraft = "";
   }
 
   $: appUpdateAvailable = $dashState.appUpdate?.available ?? false;
@@ -173,28 +192,61 @@
     }
   }
 
-  async function createInstanceForActiveTarget() {
+  async function createInstanceForActiveTarget(preset: "standalone" | "bitwig") {
     if (!activeUnboundTarget) return;
-    const binding = await dash.bindHardwareBridge(activeUnboundTarget);
+    const binding = await dash.bindHardwareBridge(activeUnboundTarget, "hardware", preset);
     if (binding) {
       activeTabKey = `instance:${binding.instance_id}`;
     }
   }
 
-  async function saveDisplayName() {
-    if (!activeInstance) return;
-    const nextValue = nameDraft.trim();
-    const currentValue = activeInstance.display_name?.trim() || "";
-    if (nextValue !== currentValue) {
-      await dash.setBridgeDisplayName(activeInstance.instance_id, nextValue || null);
-    }
-    renamingInstanceId = null;
+  function reorderControllerTabs(instanceIds: string[]) {
+    void dash.setTabOrder(instanceIds);
   }
 
-  function beginRename() {
-    if (!activeInstance) return;
-    renamingInstanceId = activeInstance.instance_id;
-    nameDraft = activeInstance.display_name?.trim() || "";
+  function displayNameFor(instanceId: string | null): string {
+    return instanceById(instanceId)?.display_name?.trim() || "";
+  }
+
+  function instanceById(instanceId: string | null) {
+    if (!instanceId) return null;
+    return $dashState.bridge.instances.find((candidate) => candidate.instance_id === instanceId) ?? null;
+  }
+
+  async function saveDisplayName(instanceId: string | null, draft: string) {
+    if (!instanceId) return;
+    const instance = instanceById(instanceId);
+    if (!instance) {
+      return;
+    }
+
+    const nextValue = draft.trim();
+    const currentValue = instance.display_name?.trim() || "";
+    if (nextValue !== currentValue) {
+      await dash.setBridgeDisplayName(instance.instance_id, nextValue || null);
+    }
+  }
+
+  function beginRename(scope: "tab" | "detail", instanceId?: string) {
+    const targetInstanceId = instanceId ?? activeInstance?.instance_id ?? null;
+    if (!targetInstanceId) return;
+
+    const instance = instanceById(targetInstanceId);
+    if (!instance) return;
+
+    if (scope === "tab") {
+      activeTabKey = `instance:${instance.instance_id}`;
+      detailRenamingInstanceId = null;
+      tabRenamingInstanceId = instance.instance_id;
+      tabNameDraftKey = instance.instance_id;
+      tabNameDraft = instance.display_name?.trim() || "";
+      return;
+    }
+
+    tabRenamingInstanceId = null;
+    detailRenamingInstanceId = instance.instance_id;
+    detailNameDraftKey = instance.instance_id;
+    detailNameDraft = instance.display_name?.trim() || "";
   }
 
   async function setActiveInstanceTarget(target: "standalone" | "bitwig") {
@@ -202,9 +254,9 @@
     await dash.setBridgeTarget(activeInstance.instance_id, target);
   }
 
-  async function setActiveInstanceSource(source: "installed" | "workspace") {
-    if (!activeInstance || source === activeInstance.artifact_source) return;
-    await dash.setBridgeArtifactSource(activeInstance.instance_id, source);
+  async function setActiveInstanceEnvironment(environment: "installed" | "workspace") {
+    if (!activeInstance || environment === activeInstance.artifact_source) return;
+    await dash.setBridgeArtifactSource(activeInstance.instance_id, environment);
   }
 
   async function setActiveInstanceChannel(channel: "stable" | "beta" | "nightly") {
@@ -218,16 +270,31 @@
     await dash.setBridgeInstalledRelease(activeInstance.instance_id, channel, tag);
   }
 
-  async function onTitleKeydown(event: KeyboardEvent) {
+  async function onDetailTitleKeydown(event: KeyboardEvent) {
     if (event.key === "Enter") {
       event.preventDefault();
-      await saveDisplayName();
+      await saveDisplayName(detailRenamingInstanceId, detailNameDraft);
+      detailRenamingInstanceId = null;
       return;
     }
     if (event.key === "Escape") {
       event.preventDefault();
-      renamingInstanceId = null;
-      nameDraft = activeInstance?.display_name?.trim() || "";
+      detailRenamingInstanceId = null;
+      detailNameDraft = displayNameFor(activeInstance?.instance_id ?? null);
+    }
+  }
+
+  async function onTabTitleKeydown(event: KeyboardEvent) {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      await saveDisplayName(tabRenamingInstanceId, tabNameDraft);
+      tabRenamingInstanceId = null;
+      return;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      tabRenamingInstanceId = null;
+      tabNameDraft = displayNameFor(activeInstance?.instance_id ?? null);
     }
   }
 
@@ -254,32 +321,57 @@
     !!activeInstance &&
     activeInstance.artifact_source === "installed" &&
     !installedSelectionReady;
-  $: activeVersionLabel =
-    !activeInstance
-      ? "-"
-      : activeInstance.artifact_source === "workspace"
-        ? "workspace"
-        : activeInstance.installed_pinned_tag?.trim()
-          ? activeInstance.installed_pinned_tag
-          : installedSelectionReady && $dashState.installed
-            ? $dashState.installed.tag
-            : `latest (${activeInstance.installed_channel ?? "stable"})`;
   $: activeFlashLabel = activeInstance
-    ? `${fmtTargetLabel(activeInstance.target)} / ${activeVersionLabel}`
+    ? formatSelectedFirmwareLabel({
+        target: activeInstance.target,
+        source: activeInstance.artifact_source,
+        pinnedTag: activeInstance.installed_pinned_tag,
+        installedTag: $dashState.installed?.tag ?? null,
+        installedChannel: activeInstance.installed_channel,
+        installedReady: installedSelectionReady,
+      })
     : "-";
   $: activeErrorMessage = $dashState.error?.message ?? null;
+  $: activeErrorActions = apiErrorSuggestedActions($dashState.error);
+  $: activeFlashNotice =
+    activeInstance &&
+    $dashState.flashNotice &&
+    $dashState.flashNotice.instanceId === activeInstance.instance_id
+      ? $dashState.flashNotice
+      : null;
 </script>
 
 <div class="page">
   <HeaderBar
     device={$dashState.device}
+    midiInventory={$dashState.midiInventory}
+    loadingMidiInventory={$dashState.loadingMidiInventory}
+    {midiLinkLabelsBySerial}
     platform={$dashState.platform}
     appUpdateAvailable={appUpdateAvailable}
     appUpdateLabel={appUpdateLabel}
+    onRefreshMidiInventory={() => void dash.refreshMidiInventory()}
   />
 
   <section class="panel mainPanel">
-    <InstanceTabs tabs={controllerTabs} activeKey={activeTabKey} onSelect={(key) => (activeTabKey = key)} />
+    <InstanceTabs
+      tabs={controllerTabs}
+      activeKey={activeTabKey}
+      midiInventory={$dashState.midiInventory}
+      loadingMidiInventory={$dashState.loadingMidiInventory}
+      renamingInstanceId={tabRenamingInstanceId}
+      nameDraft={tabNameDraft}
+      busy={activeBusy}
+      onSelect={(key) => (activeTabKey = key)}
+      onReorder={reorderControllerTabs}
+      onBeginRename={(instanceId) => beginRename("tab", instanceId)}
+      onNameInput={(value) => (tabNameDraft = value)}
+      onSaveName={async () => {
+        await saveDisplayName(tabRenamingInstanceId, tabNameDraft);
+        tabRenamingInstanceId = null;
+      }}
+      onTitleKeydown={onTabTitleKeydown}
+    />
 
     <div class="panelBody">
       {#if $dashState.booting}
@@ -294,13 +386,16 @@
         <InstanceHeader
           instance={activeInstance}
           fallbackName={fallbackInstanceName(activeInstance)}
-          renaming={renamingInstanceId === activeInstance.instance_id}
-          {nameDraft}
+          renaming={detailRenamingInstanceId === activeInstance.instance_id}
+          nameDraft={detailNameDraft}
           busy={activeBusy}
-          onNameInput={(value) => (nameDraft = value)}
-          {onTitleKeydown}
-          onSaveName={saveDisplayName}
-          onBeginRename={beginRename}
+          onNameInput={(value) => (detailNameDraft = value)}
+          onTitleKeydown={onDetailTitleKeydown}
+          onSaveName={async () => {
+            await saveDisplayName(detailRenamingInstanceId, detailNameDraft);
+            detailRenamingInstanceId = null;
+          }}
+          onBeginRename={() => beginRename("detail", activeInstance.instance_id)}
           onOpenLogs={openBridgeLogs}
           onToggleEnabled={() => dash.setBridgeEnabled(activeInstance.instance_id, !activeInstance.enabled)}
           onRemove={() => dash.removeBridge(activeInstance.instance_id)}
@@ -315,21 +410,18 @@
             {activeTagValue}
             {activeTagOptions}
             needsDownload={needsDownloadActiveInstance}
-            onSourceChange={setActiveInstanceSource}
+            canFlash={canFlashActiveInstance}
+            flashing={$dashState.flashing && $dashState.flashingInstanceId === activeInstance.instance_id}
+            selectedFirmware={activeFlashLabel}
+            errorMessage={activeErrorMessage}
+            errorActions={activeErrorActions}
+            flashNotice={activeFlashNotice}
+            onEnvironmentChange={setActiveInstanceEnvironment}
             onTargetChange={setActiveInstanceTarget}
             onOpenFolder={() => openSourcePath(activeInstance.artifact_location_path)}
             onChannelChange={setActiveInstanceChannel}
             onTagChange={setActiveInstanceTag}
             onDownload={() => dash.installForBridgeInstance(activeInstance.instance_id)}
-          />
-
-          <InstanceActionsCard
-            selectedFirmware={activeFlashLabel}
-            needsDownload={needsDownloadActiveInstance}
-            canFlash={canFlashActiveInstance}
-            busy={activeBusy}
-            flashing={$dashState.flashing && $dashState.flashingInstanceId === activeInstance.instance_id}
-            errorMessage={activeErrorMessage}
             onFlash={() => dash.flashInstance(activeInstance.instance_id)}
           />
         </div>
@@ -379,15 +471,15 @@
 <style>
   .page {
     height: 100vh;
-    padding: 14px;
+    padding: var(--space-5);
     display: grid;
     grid-template-rows: auto 1fr auto;
-    gap: 12px;
+    gap: var(--space-4);
   }
 
   .panel {
     border: 1px solid var(--border);
-    border-radius: 6px;
+    border-radius: var(--radius-panel);
     background: var(--panel);
     overflow: hidden;
     display: flex;
@@ -400,16 +492,16 @@
   }
 
   .panelBody {
-    padding: 14px;
+    padding: var(--space-5);
     overflow: auto;
     display: grid;
-    gap: 14px;
+    gap: var(--space-5);
     min-height: 0;
   }
 
   .stack {
     display: grid;
-    gap: 12px;
+    gap: var(--space-4);
   }
 
   .muted {
@@ -434,7 +526,7 @@
 
   .bootState {
     display: grid;
-    gap: 14px;
+    gap: var(--space-5);
   }
 
   .bootTitle {
@@ -447,13 +539,13 @@
 
   .bootGrid {
     display: grid;
-    gap: 12px;
+    gap: var(--space-4);
   }
 
   .bootCard {
     min-height: 136px;
     border: 1px solid var(--border);
-    border-radius: 8px;
+    border-radius: var(--radius-card);
     background:
       linear-gradient(
         90deg,
@@ -471,13 +563,6 @@
     }
     to {
       background-position: -20% 0;
-    }
-  }
-
-  @media (max-width: 980px) {
-    .page {
-      padding: 12px;
-      gap: 10px;
     }
   }
 </style>

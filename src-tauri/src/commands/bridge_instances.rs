@@ -22,6 +22,12 @@ pub fn bridge_instance_bind(
     request: BridgeInstanceBindRequest,
 ) -> ApiResult<BridgeInstanceBindingResponse> {
     let current = state.bridge_instances_get();
+    let installed_channel = match request.artifact_source {
+        ms_manager_core::ArtifactSource::Installed => {
+            Some(request.installed_channel.unwrap_or(ms_manager_core::Channel::Stable))
+        }
+        ms_manager_core::ArtifactSource::Workspace => None,
+    };
     let binding = bridge_instances::build_binding(
         &current,
         request.app,
@@ -29,9 +35,9 @@ pub fn bridge_instance_bind(
         &request.controller_serial,
         request.controller_vid,
         request.controller_pid,
-        ms_manager_core::FirmwareTarget::Bitwig,
-        ms_manager_core::ArtifactSource::Installed,
-        Some(ms_manager_core::Channel::Stable),
+        request.target,
+        request.artifact_source,
+        installed_channel,
         None,
     )
     .map_err(|reason| ApiError::new("bridge_instance_bind_failed", reason))?;

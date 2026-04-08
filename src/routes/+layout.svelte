@@ -53,6 +53,20 @@
       "Liberation Mono", "Courier New", monospace;
     --font-sans: "Aptos", "Segoe UI Variable Text", "Segoe UI", Arial, sans-serif;
 
+    --space-1: 6px;
+    --space-2: 8px;
+    --space-3: 10px;
+    --space-4: 12px;
+    --space-5: 14px;
+    --radius-panel: 6px;
+    --radius-card: 8px;
+    --tabs-strip-height: 78px;
+    --control-height: 40px;
+    --control-radius: 6px;
+    --control-padding-x: 10px;
+    --pill-padding-y: 4px;
+    --pill-padding-x: 10px;
+
     font-size: 15px;
     line-height: 22px;
     text-rendering: geometricPrecision;
@@ -80,5 +94,42 @@
     background: var(--bg);
     color: var(--fg);
     font-family: var(--font-mono);
+  }
+
+  :global(*) {
+    scrollbar-width: thin;
+    scrollbar-color: color-mix(in srgb, var(--border-strong) 72%, transparent) transparent;
+  }
+
+  :global(*::-webkit-scrollbar) {
+    width: 8px;
+    height: 8px;
+  }
+
+  :global(*::-webkit-scrollbar-track) {
+    background: transparent;
+  }
+
+  :global(*::-webkit-scrollbar-thumb) {
+    background: color-mix(in srgb, var(--border-strong) 72%, transparent);
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+
+  :global(*::-webkit-scrollbar-thumb:hover) {
+    background: color-mix(in srgb, var(--muted) 52%, transparent);
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+
+  :global(*::-webkit-scrollbar-corner) {
+    background: transparent;
+  }
+
+  :global(*::-webkit-scrollbar-button) {
+    display: none;
+    width: 0;
+    height: 0;
   }
 </style>

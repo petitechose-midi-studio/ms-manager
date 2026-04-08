@@ -1,6 +1,12 @@
 import { get } from "svelte/store";
 
-import { appUpdateCheck, appUpdateOpenLatest, listChannelTags, statusGet } from "$lib/api/client";
+import {
+  appUpdateCheck,
+  appUpdateOpenLatest,
+  listChannelTags,
+  midiInventoryGet,
+  statusGet,
+} from "$lib/api/client";
 import type { Channel } from "$lib/api/types";
 import {
   applyStatus,
@@ -10,10 +16,42 @@ import {
 } from "$lib/state/dashboard_shared";
 
 export function createDashboardStatusController({ state, activity }: DashboardStatusDeps) {
+  async function refreshMidiInventory(options: { log?: boolean } = {}) {
+    const { log = true } = options;
+    state.update((current) => ({ ...current, loadingMidiInventory: true }));
+    try {
+      if (log) {
+        activity.add("info", "ui", "midi inventory refresh");
+      }
+      const midiInventory = await midiInventoryGet();
+      state.update((current) => ({ ...current, midiInventory }));
+    } catch (error) {
+      activity.add("warn", "ui", "midi inventory refresh failed", error);
+    } finally {
+      state.update((current) => ({ ...current, loadingMidiInventory: false }));
+    }
+  }
+
   async function refreshStatus() {
     activity.add("info", "ui", "status refresh");
+    state.update((current) => ({ ...current, loadingMidiInventory: true }));
     try {
-      applyStatus(state, await statusGet());
+      const status = await statusGet();
+      applyStatus(state, status);
+
+      void (async () => {
+        try {
+          const midiInventory = await midiInventoryGet();
+          state.update((current) => ({ ...current, midiInventory }));
+        } catch (error) {
+          activity.add("warn", "ui", "midi inventory refresh failed", error);
+        } finally {
+          state.update((current) => ({ ...current, loadingMidiInventory: false }));
+        }
+      })();
+    } catch (error) {
+      state.update((current) => ({ ...current, loadingMidiInventory: false }));
+      throw error;
     } finally {
       state.update((current) => ({ ...current, booting: false }));
     }
@@ -72,6 +110,7 @@ export function createDashboardStatusController({ state, activity }: DashboardSt
 
   return {
     refreshStatus,
+    refreshMidiInventory,
     loadTagsForChannel,
     checkAppUpdate,
     installAppUpdate,

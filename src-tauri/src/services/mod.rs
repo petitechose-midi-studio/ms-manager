@@ -13,6 +13,7 @@ pub mod flash;
 pub mod install;
 pub mod installed_artifacts;
 pub mod manager_autostart;
+pub mod midi_inventory;
 pub mod payload;
 pub mod process;
 pub mod startup;

@@ -31,6 +31,42 @@ export type DeviceStatus = {
   targets: DeviceTarget[];
 };
 
+export type MidiInventoryProvider =
+  | "windows_midi_services"
+  | "winmm"
+  | "alsa"
+  | "core_midi"
+  | "none";
+
+export type MidiPortDirection = "input" | "output" | "bidirectional";
+export type MidiMatchConfidence = "strong" | "weak" | "none";
+
+export type MidiPortMatch = {
+  controller_serial?: string | null;
+  confidence: MidiMatchConfidence;
+  reason?: string | null;
+};
+
+export type MidiPortInfo = {
+  id: string;
+  provider: MidiInventoryProvider;
+  name: string;
+  direction: MidiPortDirection;
+  manufacturer?: string | null;
+  serial_number?: string | null;
+  vid?: number | null;
+  pid?: number | null;
+  system_device_id?: string | null;
+  match_info: MidiPortMatch;
+};
+
+export type MidiInventoryStatus = {
+  provider: MidiInventoryProvider;
+  available: boolean;
+  ports: MidiPortInfo[];
+  notes: string[];
+};
+
 export type BridgeStatus = {
   installed: boolean;
   running: boolean;
@@ -102,6 +138,9 @@ export type BridgeInstanceBindRequest = {
   controller_serial: string;
   controller_vid: number;
   controller_pid: number;
+  target: FirmwareTarget;
+  artifact_source: ArtifactSource;
+  installed_channel?: Channel | null;
 };
 
 export type BridgeInstanceBindingResponse = {
@@ -194,10 +233,19 @@ export type Status = {
   artifact_source: ArtifactSource;
   artifact_config_path: string | null;
   artifact_message: string | null;
+  tab_order: string[];
   platform: Platform;
   payload_root: string;
   device: DeviceStatus;
   bridge: BridgeStatus;
+};
+
+export type TabOrderSetRequest = {
+  instance_ids: string[];
+};
+
+export type TabOrderResponse = {
+  tab_order: string[];
 };
 
 export type AppUpdateInfo = {
@@ -245,6 +293,11 @@ export type FlashEvent =
       channel: Channel;
       tag: string;
       profile: string;
+    }
+  | {
+      type: "message";
+      level: "info" | "warn";
+      message: string;
     }
   | {
       type: "output";

@@ -15,6 +15,7 @@ pub async fn status_get(state: State<'_, AppState>) -> ApiResult<Status> {
 pub(crate) async fn status_get_internal(state: &AppState) -> ApiResult<Status> {
     let layout = state.layout_get();
     let installed = state.install_state_get();
+    let settings = state.settings_get();
     let artifact_health =
         artifact_resolver::management_artifact_health(&layout, installed.as_ref());
     let host_installed = artifact_health.ready;
@@ -49,6 +50,7 @@ pub(crate) async fn status_get_internal(state: &AppState) -> ApiResult<Status> {
             .config_path
             .map(|path| path.display().to_string()),
         artifact_message: artifact_health.message,
+        tab_order: settings.tab_order,
         platform: ms_manager_core::Platform::current()?,
         payload_root: layout.root().display().to_string(),
         device,

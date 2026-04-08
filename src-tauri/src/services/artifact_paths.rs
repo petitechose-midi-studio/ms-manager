@@ -16,14 +16,12 @@ pub fn ensure_file_exists(key: &str, path: &Path) -> ApiResult<()> {
 
     let message = missing_artifact_message(key, path);
 
-    Err(ApiError::new(
-        "artifact_missing",
-        message,
+    Err(
+        ApiError::new("artifact_missing", message).with_details(serde_json::json!({
+            "artifact": key,
+            "path": path.display().to_string(),
+        })),
     )
-    .with_details(serde_json::json!({
-        "artifact": key,
-        "path": path.display().to_string(),
-    })))
 }
 
 fn missing_artifact_message(key: &str, path: &Path) -> String {

@@ -39,6 +39,10 @@
     return parts.join(" / ");
   }
 
+  function deviceIdLabel(t: DeviceTarget): string {
+    return `Device ID: ${t.target_id}`;
+  }
+
   $: targets = device.targets ?? [];
   $: showOverlay = device.connected && targets.length > 0;
 
@@ -162,6 +166,7 @@
           {#if detailsFor(t)}
             <div class="tMeta">{detailsFor(t)}</div>
           {/if}
+          <div class="tMeta">{deviceIdLabel(t)}</div>
         </div>
       {/each}
     </div>
@@ -269,7 +274,6 @@
     gap: 10px;
     max-height: 42vh;
     overflow: auto;
-    scrollbar-gutter: stable;
   }
 
   .t {

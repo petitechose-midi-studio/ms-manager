@@ -15,6 +15,7 @@ import type {
   FlashEvent,
   InstallEvent,
   InstallState,
+  MidiInventoryStatus,
   Platform,
   Status,
 } from "$lib/api/types";
@@ -26,6 +27,7 @@ export type DashboardState = {
   payloadRoot: string | null;
   artifactConfigPath: string | null;
   artifactMessage: string | null;
+  tabOrder: string[];
   appUpdate: AppUpdateStatus | null;
   checkingAppUpdate: boolean;
   installingAppUpdate: boolean;
@@ -34,11 +36,18 @@ export type DashboardState = {
   installed: InstallState | null;
   hostInstalled: boolean;
   device: DeviceStatus;
+  midiInventory: MidiInventoryStatus | null;
+  loadingMidiInventory: boolean;
   bridge: BridgeStatus;
   bridgeMutating: boolean;
   installing: boolean;
   flashing: boolean;
   flashingInstanceId: string | null;
+  flashNotice: {
+    instanceId: string | null;
+    level: "warn";
+    message: string;
+  } | null;
   activeBridgeInstanceId: string | null;
   relocating: boolean;
   now: string | null;
@@ -72,6 +81,7 @@ export function createInitialDashboardState(): DashboardState {
     payloadRoot: null,
     artifactConfigPath: null,
     artifactMessage: null,
+    tabOrder: [],
     appUpdate: null,
     checkingAppUpdate: false,
     installingAppUpdate: false,
@@ -80,11 +90,14 @@ export function createInitialDashboardState(): DashboardState {
     installed: null,
     hostInstalled: false,
     device: { connected: false, count: 0, targets: [] },
+    midiInventory: null,
+    loadingMidiInventory: false,
     bridge: { installed: false, running: false, paused: false, serial_open: false, instances: [] },
     bridgeMutating: false,
     installing: false,
     flashing: false,
     flashingInstanceId: null,
+    flashNotice: null,
     activeBridgeInstanceId: null,
     relocating: false,
     now: null,
@@ -105,6 +118,17 @@ export function clearApiError(state: Writable<DashboardState>) {
   state.update((current) => ({ ...current, error: null }));
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+export function apiErrorSuggestedActions(error: ApiError | null): string[] {
+  if (!error || !isRecord(error.details)) return [];
+  const actions = error.details.suggested_actions;
+  if (!Array.isArray(actions)) return [];
+  return actions.filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+}
+
 export function applyStatus(state: Writable<DashboardState>, status: Status) {
   state.update((current) => ({
     ...current,
@@ -113,6 +137,7 @@ export function applyStatus(state: Writable<DashboardState>, status: Status) {
     payloadRoot: status.payload_root,
     artifactConfigPath: status.artifact_config_path,
     artifactMessage: status.artifact_message,
+    tabOrder: status.tab_order ?? [],
     installed: status.installed,
     hostInstalled: status.host_installed,
     device: status.device,
@@ -170,6 +195,7 @@ export function nowFromInstall(event: InstallEvent): string {
 
 export function nowFromFlash(event: FlashEvent): string {
   if (event.type === "begin") return `Flashing firmware: ${event.profile}…`;
+  if (event.type === "message") return event.message;
   if (event.type === "output") {
     const pct = extractPercent(event.line.trim());
     if (pct != null && pct > 0) {
@@ -199,3 +225,40 @@ export type DashboardBridgeMode = BridgeMode;
 export type DashboardArtifactSource = ArtifactSource;
 export type DashboardFirmwareTarget = FirmwareTarget;
 export type DashboardBridgeLogEvent = BridgeLogEvent;
+export type DashboardBindPreset = "standalone" | "bitwig";
+
+export function bindPresetDefaults(preset: DashboardBindPreset): {
+  target: DashboardFirmwareTarget;
+  artifactSource: DashboardArtifactSource;
+  installedChannel: Channel | null;
+} {
+  if (preset === "bitwig") {
+    return {
+      target: "bitwig",
+      artifactSource: "installed",
+      installedChannel: "stable",
+    };
+  }
+
+  return {
+    target: "standalone",
+    artifactSource: "workspace",
+    installedChannel: null,
+  };
+}
+
+export function sortInstanceIdsByTabOrder(instanceIds: string[], tabOrder: string[]): string[] {
+  const orderIndex = new Map(tabOrder.map((instanceId, index) => [instanceId, index]));
+
+  return instanceIds
+    .map((instanceId, index) => ({
+      instanceId,
+      index,
+      order: orderIndex.get(instanceId) ?? Number.MAX_SAFE_INTEGER,
+    }))
+    .sort((a, b) => {
+      if (a.order !== b.order) return a.order - b.order;
+      return a.index - b.index;
+    })
+    .map((entry) => entry.instanceId);
+}

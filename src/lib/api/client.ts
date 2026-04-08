@@ -14,7 +14,10 @@ import type {
   DeviceStatus,
   InstallState,
   LastFlashed,
+  MidiInventoryStatus,
   Status,
+  TabOrderResponse,
+  TabOrderSetRequest,
 } from "$lib/api/types";
 
 export function statusGet(): Promise<Status> {
@@ -27,6 +30,10 @@ export function deviceStatusGet(): Promise<DeviceStatus> {
 
 export function bridgeStatusGet(): Promise<BridgeStatus> {
   return invokeApi<BridgeStatus>("bridge_status_get");
+}
+
+export function midiInventoryGet(): Promise<MidiInventoryStatus> {
+  return invokeApi<MidiInventoryStatus>("midi_inventory_get");
 }
 
 export function bridgeLogOpen(): Promise<void> {
@@ -92,6 +99,14 @@ export function payloadRootRelocate(newRoot: string): Promise<Status> {
 
 export function pathOpen(path: string): Promise<void> {
   return invokeApi<void>("path_open", { path });
+}
+
+export function urlOpen(url: string): Promise<void> {
+  return invokeApi<void>("url_open", { url });
+}
+
+export function tabOrderSet(request: TabOrderSetRequest): Promise<TabOrderResponse> {
+  return invokeApi<TabOrderResponse>("tab_order_set", { request });
 }
 
 export function appUpdateCheck(): Promise<AppUpdateStatus> {
