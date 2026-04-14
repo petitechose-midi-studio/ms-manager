@@ -27,6 +27,14 @@
 <slot />
 
 <style>
+  @font-face {
+    font-family: "JetBrainsMono Nerd Font Mono";
+    src: url("/fonts/JetBrainsMonoNerdFontMono-Regular.ttf") format("truetype");
+    font-style: normal;
+    font-weight: 400;
+    font-display: swap;
+  }
+
   :global(*) {
     box-sizing: border-box;
   }
@@ -48,9 +56,16 @@
     --ok: #3fd07f;
     --warn: #d7b35b;
     --err: #e16b6b;
+    --log-rx: #57c7ff;
+    --log-tx: #3fd07f;
+    --log-system: #d9b85c;
+    --log-info: #7dcfff;
+    --log-source: #c58cff;
+    --log-row-hover: #171d27;
 
-    --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
-      "Liberation Mono", "Courier New", monospace;
+    --font-mono: "JetBrainsMono Nerd Font Mono", "IBM Plex Mono", ui-monospace, SFMono-Regular,
+      Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+    --font-log: var(--font-mono);
     --font-sans: "Aptos", "Segoe UI Variable Text", "Segoe UI", Arial, sans-serif;
 
     --space-1: 6px;
@@ -87,6 +102,12 @@
     --ok: #0a7f41;
     --warn: #8a6a0b;
     --err: #b42318;
+    --log-rx: #0b6ccf;
+    --log-tx: #0a7f41;
+    --log-system: #9a6700;
+    --log-info: #155eef;
+    --log-source: #7a3ef0;
+    --log-row-hover: #eef2f7;
   }
 
   :global(body) {

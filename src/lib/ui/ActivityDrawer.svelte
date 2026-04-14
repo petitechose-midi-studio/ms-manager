@@ -2,6 +2,7 @@
   import { tick } from "svelte";
   import { matchesActivityFilter } from "$lib/state/activity";
   import type { ActivityEntry, ActivityFilter } from "$lib/state/activity";
+  import ActivityLogRow from "$lib/ui/logs/ActivityLogRow.svelte";
 
   export let open: boolean;
   export let filter: ActivityFilter;
@@ -132,19 +133,21 @@
       onscroll={onLogScroll}
     >
       {#if visible.length === 0}
-        <div class="empty">(no entries)</div>
+        <div class="content">
+          <div class="empty">(no entries)</div>
+        </div>
       {:else}
-        {#if topSpacer > 0}
-          <div class="spacer" aria-hidden="true" style:height={`${topSpacer}px`}></div>
-        {/if}
-        {#each rendered as e (e.id)}
-          <div class="line" data-level={e.level}>
-            <span class="msg">{e.message}</span>
-          </div>
-        {/each}
-        {#if bottomSpacer > 0}
-          <div class="spacer" aria-hidden="true" style:height={`${bottomSpacer}px`}></div>
-        {/if}
+        <div class="content">
+          {#if topSpacer > 0}
+            <div class="spacer" aria-hidden="true" style:height={`${topSpacer}px`}></div>
+          {/if}
+          {#each rendered as e (e.id)}
+            <ActivityLogRow entry={e} />
+          {/each}
+          {#if bottomSpacer > 0}
+            <div class="spacer" aria-hidden="true" style:height={`${bottomSpacer}px`}></div>
+          {/if}
+        </div>
       {/if}
     </div>
   {/if}
@@ -265,44 +268,32 @@
     min-height: 0;
     overflow: auto;
     padding: 10px 12px;
-    display: flex;
-    flex-direction: column;
-    align-items: stretch;
-    justify-content: flex-start;
-    gap: 6px;
     scrollbar-gutter: stable;
+    background:
+      linear-gradient(
+        180deg,
+        color-mix(in srgb, var(--panel) 96%, black 4%) 0%,
+        color-mix(in srgb, var(--panel) 99%, transparent) 100%
+      );
   }
 
-  .line {
-    color: var(--muted);
-    font-size: 12px;
-    line-height: 16px;
-    font-family: var(--font-mono);
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-    min-height: 16px;
-  }
-
-  .line[data-level="error"] {
-    color: var(--err);
-  }
-
-  .line[data-level="warn"] {
-    color: var(--warn);
-  }
-
-  .line[data-level="ok"] {
-    color: var(--ok);
+  .content {
+    min-width: 100%;
+    width: max-content;
+    display: grid;
+    align-content: start;
+    gap: 6px;
   }
 
   .empty {
     color: var(--muted);
     font-size: 12px;
     line-height: 16px;
-    font-family: var(--font-mono);
+    font-family: var(--font-log);
   }
 
   .spacer {
     flex: 0 0 auto;
+    min-width: 1px;
   }
 </style>
