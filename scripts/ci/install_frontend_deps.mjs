@@ -33,6 +33,17 @@ function installOptionalDependency(packageName, version) {
   run("npm", ["install", "--no-save", "--no-audit", "--no-fund", `${packageName}@${version}`]);
 }
 
+function canLoadNodePackage(packageName) {
+  try {
+    execFileSync(process.execPath, ["-e", `require(${JSON.stringify(packageName)})`], {
+      stdio: "ignore",
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function ensureOptionalNativeDependency({ packageJsonPath, packageLabel, resolvePackageName }) {
   const packageJson = require(packageJsonPath);
   const optionalDependencies = packageJson.optionalDependencies ?? {};
@@ -41,15 +52,15 @@ function ensureOptionalNativeDependency({ packageJsonPath, packageLabel, resolve
     throw new Error(`missing ${packageLabel} optional dependency metadata for ${process.platform}/${process.arch}`);
   }
 
-  try {
-    require.resolve(packageName);
-    require(packageName);
+  if (canLoadNodePackage(packageName)) {
     return;
-  } catch {
-    const version = optionalDependencies[packageName];
-    installOptionalDependency(packageName, version);
-    require.resolve(packageName);
-    require(packageName);
+  }
+
+  const version = optionalDependencies[packageName];
+  installOptionalDependency(packageName, version);
+
+  if (!canLoadNodePackage(packageName)) {
+    throw new Error(`failed to load ${packageLabel} native dependency ${packageName} after reinstall`);
   }
 }
 
