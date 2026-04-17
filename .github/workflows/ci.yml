@@ -50,7 +50,7 @@ jobs:
         run: |
           set -euo pipefail
           # npm sometimes skips Rollup's Linux optional package on GitHub runners.
-          package_spec="$(node -e "const pkg=require('./node_modules/rollup/package.json'); const name=Object.keys(pkg.optionalDependencies || {}).find((dep) => dep.includes('linux-x64-gnu')); if (!name) { throw new Error('missing linux rollup optional dependency metadata'); } process.stdout.write(`${name}@${pkg.optionalDependencies[name]}`);")"
+          package_spec="$(node -e "const pkg=require('./node_modules/rollup/package.json'); const name=Object.keys(pkg.optionalDependencies || {}).find((dep) => dep.includes('linux-x64-gnu')); if (!name) { throw new Error('missing linux rollup optional dependency metadata'); } process.stdout.write(name + '@' + pkg.optionalDependencies[name]);")"
           npm install --no-save "$package_spec"
 
       - name: Typecheck
