@@ -85,6 +85,49 @@ jobs:
             --dir artifacts
           ls -la artifacts
 
+      - name: Checkout ms-dev-env
+        uses: actions/checkout@v6
+        with:
+          repository: petitechose-midi-studio/ms-dev-env
+          ref: main
+          path: workspace
+
+      - name: Setup ms runtime
+        uses: ./workspace/.github/actions/setup-ms-runtime
+        with:
+          working-directory: workspace
+
+      - name: Build expected candidate inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > artifacts/input-repos.json <<'EOF'
+          [
+            {
+              "id": "ms-manager",
+              "repo": "petitechose-midi-studio/ms-manager",
+              "sha": "${{ inputs.source_sha }}"
+            }
+          ]
+          EOF
+
+      - name: Verify signed candidate metadata
+        shell: bash
+        working-directory: workspace
+        env:
+          MS_CANDIDATE_ED25519_PK: ${{ vars.MS_CANDIDATE_ED25519_PK }}
+        run: |
+          set -euo pipefail
+          uv run ms release candidate verify \
+            --artifacts-dir ../artifacts \
+            --manifest-path ../artifacts/candidate.json \
+            --checksums-path ../artifacts/checksums.txt \
+            --sig-path ../artifacts/candidate.json.sig \
+            --expected-producer-repo petitechose-midi-studio/ms-manager \
+            --expected-producer-kind ms-manager-app \
+            --expected-workflow-file .github/workflows/candidate.yml \
+            --expected-input-repos-json ../artifacts/input-repos.json
+
       - name: Validate package policy
         shell: bash
         run: |
