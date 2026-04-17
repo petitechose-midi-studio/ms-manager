@@ -129,6 +129,24 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
+      - name: Checkout source SHA
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ inputs.source_sha }}
+          fetch-depth: 0
+
+      - name: Checkout ms-dev-env
+        uses: actions/checkout@v6
+        with:
+          repository: petitechose-midi-studio/ms-dev-env
+          ref: main
+          path: workspace
+
+      - name: Setup ms runtime
+        uses: ./workspace/.github/actions/setup-ms-runtime
+        with:
+          working-directory: workspace
+
       - name: Download candidate assets
         shell: bash
         run: |
@@ -138,56 +156,66 @@ jobs:
           gh release download "$tag" --repo "$GITHUB_REPOSITORY" --dir artifacts
           ls -la artifacts
 
-      - name: Generate checksums and metadata
+      - name: Generate candidate metadata inputs
         shell: bash
         run: |
           set -euo pipefail
-          python - <<'PY'
-          import hashlib
-          import json
-          import os
-          from pathlib import Path
-
-          root = Path("artifacts")
-          files = []
-
-          for p in sorted(root.iterdir()):
-              if not p.is_file():
-                  continue
-              if p.name in {"candidate.json", "checksums.txt"}:
-                  continue
-
-              digest = hashlib.sha256(p.read_bytes()).hexdigest()
-              files.append(
-                  {
-                      "name": p.name,
-                      "size": p.stat().st_size,
-                      "sha256": digest,
-                  }
-              )
-
-          checksums = root / "checksums.txt"
-          checksums.write_text(
-              "".join(f"{item['sha256']}  {item['name']}\\n" for item in files),
-              encoding="utf-8",
-          )
-
-          candidate = {
-              "schema": 1,
-              "repo": os.environ["GITHUB_REPOSITORY"],
-              "workflow": os.environ["GITHUB_WORKFLOW"],
-              "run_id": int(os.environ["GITHUB_RUN_ID"]),
-              "run_attempt": int(os.environ["GITHUB_RUN_ATTEMPT"]),
-              "source_sha": "${{ inputs.source_sha }}",
-              "tag": f"rc-${{ inputs.source_sha }}",
-              "files": files,
+          node scripts/ci/generate_candidate_artifacts_json.mjs artifacts > artifacts/candidate-artifacts.json
+          cat > artifacts/input-repos.json <<'EOF'
+          [
+            {
+              "id": "ms-manager",
+              "repo": "petitechose-midi-studio/ms-manager",
+              "sha": "${{ inputs.source_sha }}"
+            }
+          ]
+          EOF
+          cat > artifacts/toolchain.json <<'EOF'
+          {
+            "node": "20",
+            "rust": "stable"
           }
-          (root / "candidate.json").write_text(json.dumps(candidate, indent=2) + "\\n", encoding="utf-8")
-          PY
+          EOF
 
-      - name: Upload checksums and candidate metadata
+      - name: Write candidate manifest, checksums, and signature
+        shell: bash
+        working-directory: workspace
+        env:
+          MS_CANDIDATE_ED25519_SK: ${{ secrets.MS_CANDIDATE_ED25519_SK }}
+        run: |
+          set -euo pipefail
+          uv run ms release candidate write \
+            --artifacts-dir ../artifacts \
+            --artifacts-json ../artifacts/candidate-artifacts.json \
+            --input-repos-json ../artifacts/input-repos.json \
+            --producer-repo petitechose-midi-studio/ms-manager \
+            --producer-kind ms-manager-app \
+            --workflow-file .github/workflows/candidate.yml \
+            --run-id "${GITHUB_RUN_ID}" \
+            --run-attempt "${GITHUB_RUN_ATTEMPT}" \
+            --manifest-path ../artifacts/candidate.json \
+            --checksums-path ../artifacts/checksums.txt \
+            --sig-path ../artifacts/candidate.json.sig \
+            --recipe-base-dir .. \
+            --recipe-path .github/workflows/candidate.yml \
+            --recipe-path package.json \
+            --recipe-path package-lock.json \
+            --recipe-path scripts/tauri.mjs \
+            --recipe-path scripts/tauri_versioning.mjs \
+            --recipe-path src-tauri/Cargo.toml \
+            --recipe-path src-tauri/Cargo.lock \
+            --recipe-path src-tauri/tauri.conf.json \
+            --toolchain-json ../artifacts/toolchain.json
+
+      - name: Upload signed candidate metadata
         shell: bash
         run: |
           set -euo pipefail
           tag="rc-${{ inputs.source_sha }}"
-          gh release upload "$tag" artifacts/checksums.txt artifacts/candidate.json --repo "$GITHUB_REPOSITORY" --clobber
+          gh release upload \
+            "$tag" \
+            artifacts/checksums.txt \
+            artifacts/candidate.json \
+            artifacts/candidate.json.sig \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber
