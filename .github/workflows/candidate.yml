@@ -160,7 +160,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          node scripts/ci/generate_candidate_artifacts_json.mjs artifacts > artifacts/candidate-artifacts.json
+          tmp_artifacts_json="$(mktemp)"
+          node scripts/ci/generate_candidate_artifacts_json.mjs artifacts > "$tmp_artifacts_json"
+          mv "$tmp_artifacts_json" artifacts/candidate-artifacts.json
           cat > artifacts/input-repos.json <<'EOF'
           [
             {
