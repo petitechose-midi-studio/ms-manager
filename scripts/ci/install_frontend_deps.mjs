@@ -42,11 +42,14 @@ function ensureOptionalNativeDependency({ packageJsonPath, packageLabel, resolve
   }
 
   try {
-    require.resolve(`${packageName}/package.json`);
+    require.resolve(packageName);
+    require(packageName);
     return;
   } catch {
     const version = optionalDependencies[packageName];
     installOptionalDependency(packageName, version);
+    require.resolve(packageName);
+    require(packageName);
   }
 }
 
