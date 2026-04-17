@@ -47,8 +47,17 @@ jobs:
           node-version: 20
           cache: npm
 
+      - name: Validate app versions
+        run: node scripts/ci/validate_app_versions.mjs
+
+      - name: Validate frontend lockfile
+        run: node scripts/ci/validate_frontend_lockfile.mjs
+
+      - name: Test tauri versioning
+        run: npm run test:tauri-versioning
+
       - name: Install deps
-        run: node scripts/ci/install_frontend_deps.mjs
+        run: npm ci --include=optional --no-audit --no-fund
 
       - name: Typecheck
         run: npm run check
