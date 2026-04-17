@@ -15,18 +15,53 @@ function detectLinuxLibc() {
   return report?.header?.glibcVersionRuntime ? "gnu" : "musl";
 }
 
-function pickRollupLinuxPackage(optionalDependencies) {
-  if (process.platform !== "linux") {
+function resolveOptionalPackage(optionalDependencies, candidates, prefix) {
+  for (const candidate of candidates) {
+    if (candidate && candidate in optionalDependencies) {
+      return candidate;
+    }
+  }
+
+  if (!prefix) {
     return null;
   }
 
-  const exactName = `@rollup/rollup-${process.platform}-${process.arch}-${detectLinuxLibc()}`;
-  if (exactName in optionalDependencies) {
-    return exactName;
+  return Object.keys(optionalDependencies).find((name) => name.startsWith(prefix)) ?? null;
+}
+
+function installOptionalDependency(packageName, version) {
+  run("npm", ["install", "--no-save", "--no-audit", "--no-fund", `${packageName}@${version}`]);
+}
+
+function canLoadNodePackage(packageName) {
+  try {
+    execFileSync(process.execPath, ["-e", `require(${JSON.stringify(packageName)})`], {
+      stdio: "ignore",
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function ensureOptionalNativeDependency({ packageJsonPath, packageLabel, resolvePackageName }) {
+  const packageJson = require(packageJsonPath);
+  const optionalDependencies = packageJson.optionalDependencies ?? {};
+  const packageName = resolvePackageName(optionalDependencies);
+  if (!packageName) {
+    throw new Error(`missing ${packageLabel} optional dependency metadata for ${process.platform}/${process.arch}`);
   }
 
-  const prefix = `@rollup/rollup-${process.platform}-${process.arch}-`;
-  return Object.keys(optionalDependencies).find((name) => name.startsWith(prefix)) ?? null;
+  if (canLoadNodePackage(packageName)) {
+    return;
+  }
+
+  const version = optionalDependencies[packageName];
+  installOptionalDependency(packageName, version);
+
+  if (!canLoadNodePackage(packageName)) {
+    throw new Error(`failed to load ${packageLabel} native dependency ${packageName} after reinstall`);
+  }
 }
 
 function ensureRollupNativeBinary() {
@@ -34,21 +69,53 @@ function ensureRollupNativeBinary() {
     return;
   }
 
-  const rollupPackage = require("rollup/package.json");
-  const optionalDependencies = rollupPackage.optionalDependencies ?? {};
-  const packageName = pickRollupLinuxPackage(optionalDependencies);
-  if (!packageName) {
-    throw new Error("missing Linux Rollup optional dependency metadata");
-  }
+  ensureOptionalNativeDependency({
+    packageJsonPath: "rollup/package.json",
+    packageLabel: "Rollup",
+    resolvePackageName(optionalDependencies) {
+      return resolveOptionalPackage(
+        optionalDependencies,
+        [`@rollup/rollup-${process.platform}-${process.arch}-${detectLinuxLibc()}`],
+        `@rollup/rollup-${process.platform}-${process.arch}-`,
+      );
+    },
+  });
+}
 
-  try {
-    require.resolve(`${packageName}/package.json`);
-    return;
-  } catch {
-    const version = optionalDependencies[packageName];
-    run("npm", ["install", "--no-save", "--no-audit", "--no-fund", `${packageName}@${version}`]);
-  }
+function ensureTauriCliNativeBinary() {
+  ensureOptionalNativeDependency({
+    packageJsonPath: "@tauri-apps/cli/package.json",
+    packageLabel: "Tauri CLI",
+    resolvePackageName(optionalDependencies) {
+      if (process.platform === "linux") {
+        return resolveOptionalPackage(
+          optionalDependencies,
+          [`@tauri-apps/cli-linux-${process.arch}-${detectLinuxLibc()}`],
+          `@tauri-apps/cli-linux-${process.arch}-`,
+        );
+      }
+
+      if (process.platform === "darwin") {
+        return resolveOptionalPackage(
+          optionalDependencies,
+          [`@tauri-apps/cli-darwin-${process.arch}`],
+          `@tauri-apps/cli-darwin-${process.arch}`,
+        );
+      }
+
+      if (process.platform === "win32") {
+        return resolveOptionalPackage(
+          optionalDependencies,
+          [`@tauri-apps/cli-win32-${process.arch}-msvc`],
+          `@tauri-apps/cli-win32-${process.arch}-`,
+        );
+      }
+
+      return null;
+    },
+  });
 }
 
 run("npm", ["ci", "--include=optional", "--no-audit", "--no-fund"]);
+ensureTauriCliNativeBinary();
 ensureRollupNativeBinary();
