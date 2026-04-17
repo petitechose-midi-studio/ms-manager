@@ -79,6 +79,9 @@ jobs:
           node-version: 20
           cache: npm
 
+      - name: Validate frontend lockfile
+        run: node scripts/ci/validate_frontend_lockfile.mjs
+
       - name: Install Linux deps
         if: matrix.platform == 'ubuntu-latest'
         shell: bash
@@ -99,7 +102,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install deps
-        run: node scripts/ci/install_frontend_deps.mjs
+        run: npm ci --include=optional --no-audit --no-fund
 
       - name: Build and publish candidate
         uses: tauri-apps/tauri-action@v0.6.1

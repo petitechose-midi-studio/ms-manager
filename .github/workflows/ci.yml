@@ -47,8 +47,11 @@ jobs:
           node-version: 20
           cache: npm
 
+      - name: Validate frontend lockfile
+        run: node scripts/ci/validate_frontend_lockfile.mjs
+
       - name: Install deps
-        run: node scripts/ci/install_frontend_deps.mjs
+        run: npm ci --include=optional --no-audit --no-fund
 
       - name: Typecheck
         run: npm run check
