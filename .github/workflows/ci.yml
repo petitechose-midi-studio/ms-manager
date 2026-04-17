@@ -41,7 +41,9 @@ jobs:
           cache: npm
 
       - name: Install deps
-        run: npm ci --include=optional
+        run: |
+          npm ci --include=optional
+          npm install --include=optional
 
       - name: Typecheck
         run: npm run check
