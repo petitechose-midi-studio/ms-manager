@@ -67,7 +67,7 @@ jobs:
           echo "candidate_tag=rc-${{ inputs.source_sha }}" >> "$GITHUB_OUTPUT"
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 20
           cache: npm
@@ -92,7 +92,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Install deps
-        run: npm ci --no-audit --no-fund
+        run: node scripts/ci/install_frontend_deps.mjs
 
       - name: Build and publish candidate
         uses: tauri-apps/tauri-action@v0.6.1
