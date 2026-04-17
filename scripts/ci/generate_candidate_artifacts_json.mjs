@@ -50,7 +50,14 @@ function main() {
     throw new Error("usage: node scripts/ci/generate_candidate_artifacts_json.mjs <artifacts-dir>");
   }
 
-  const ignored = new Set(["candidate.json", "candidate.json.sig", "checksums.txt"]);
+  const ignored = new Set([
+    "candidate-artifacts.json",
+    "candidate.json",
+    "candidate.json.sig",
+    "checksums.txt",
+    "input-repos.json",
+    "toolchain.json",
+  ]);
   const entries = readdirSync(artifactsDir, { withFileTypes: true })
     .filter((entry) => entry.isFile())
     .map((entry) => entry.name)
