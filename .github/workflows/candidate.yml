@@ -170,7 +170,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: |
-            src-tauri -> src-tauri/target
+            src-tauri -> target
 
       - name: Install deps
         run: npm ci --include=optional --no-audit --no-fund
