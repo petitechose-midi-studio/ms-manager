@@ -63,10 +63,12 @@ jobs:
         run: npm run check
 
       - name: Build
+        if: ${{ github.event_name != 'push' || github.ref != 'refs/heads/main' }}
         run: npm run build
 
   tauri_check:
     name: tauri (cargo check)
+    if: ${{ github.event_name != 'push' || github.ref != 'refs/heads/main' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
