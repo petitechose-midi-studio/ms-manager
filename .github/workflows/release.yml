@@ -10,7 +10,7 @@ on:
         required: true
         type: string
       source_sha:
-        description: "Source commit SHA (candidate tag is rc-<sha>)"
+        description: "Source commit SHA used to build the candidate"
         required: true
         type: string
       tooling_sha:

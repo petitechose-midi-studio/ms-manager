@@ -142,22 +142,10 @@ jobs:
         with:
           tagName: ${{ steps.vars.outputs.candidate_tag }}
           releaseName: candidate ${{ steps.vars.outputs.candidate_tag }}
-          releaseDraft: false
+          releaseDraft: true
           prerelease: true
           generateReleaseNotes: false
           args: ${{ matrix.args }}
-
-      - name: Ensure candidate release is published as prerelease
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          gh release edit \
-            "${{ steps.vars.outputs.candidate_tag }}" \
-            --repo "${GITHUB_REPOSITORY}" \
-            --draft=false \
-            --prerelease
 
   metadata:
     name: candidate metadata
@@ -188,7 +176,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          tag="rc-${{ inputs.source_sha }}"
+          tag="rc-${{ inputs.source_sha }}-tooling-${{ inputs.tooling_sha }}"
           mkdir -p artifacts
           gh release download "$tag" --repo "$GITHUB_REPOSITORY" --dir artifacts
           ls -la artifacts
@@ -263,3 +251,14 @@ jobs:
             artifacts/candidate.json.sig \
             --repo "$GITHUB_REPOSITORY" \
             --clobber
+
+      - name: Publish signed candidate release
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="rc-${{ inputs.source_sha }}-tooling-${{ inputs.tooling_sha }}"
+          gh release edit \
+            "$tag" \
+            --repo "$GITHUB_REPOSITORY" \
+            --draft=false \
+            --prerelease
