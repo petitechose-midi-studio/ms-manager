@@ -166,6 +166,12 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            src-tauri -> src-tauri/target
+
       - name: Install deps
         run: npm ci --include=optional --no-audit --no-fund
 
