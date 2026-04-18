@@ -117,10 +117,22 @@ jobs:
         with:
           tagName: ${{ steps.vars.outputs.candidate_tag }}
           releaseName: candidate ${{ steps.vars.outputs.candidate_tag }}
-          releaseDraft: true
+          releaseDraft: false
           prerelease: true
           generateReleaseNotes: false
           args: ${{ matrix.args }}
+
+      - name: Ensure candidate release is published as prerelease
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh release edit \
+            "${{ steps.vars.outputs.candidate_tag }}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --draft=false \
+            --prerelease
 
   metadata:
     name: candidate metadata
