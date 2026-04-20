@@ -7,7 +7,7 @@
   export let onChange: (next: Channel) => void;
 
   function toChannel(value: string): Channel {
-    if (value === "stable" || value === "beta" || value === "nightly") return value;
+    if (value === "stable" || value === "beta") return value;
     return "stable";
   }
 </script>
@@ -19,7 +19,6 @@
   options={[
     { value: "stable", label: "Stable" },
     { value: "beta", label: "Beta" },
-    { value: "nightly", label: "Nightly" },
   ]}
   onChange={(next) => onChange(toChannel(next))}
 />

@@ -1,7 +1,7 @@
 use regex::Regex;
 use serde::Deserialize;
 
-use crate::channel::{Channel, parse_beta_tag, parse_nightly_tag, parse_stable_tag};
+use crate::channel::{Channel, parse_beta_tag, parse_stable_tag};
 use crate::error::Result;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -66,11 +66,6 @@ pub fn latest_tag_for_channel(channel: Channel, tags: &[String]) -> Option<Strin
             .max_by_key(|(v, _)| *v)
             .map(|(_, t)| t.to_string()),
 
-        Channel::Nightly => tags
-            .iter()
-            .filter_map(|t| parse_nightly_tag(t).map(|d| (d, t)))
-            .max_by_key(|(d, _)| *d)
-            .map(|(_, t)| t.to_string()),
     }
 }
 
@@ -90,7 +85,7 @@ pub fn latest_tag_for_channel_from_releases(
                     continue;
                 }
             }
-            Channel::Beta | Channel::Nightly => {
+            Channel::Beta => {
                 if !r.prerelease {
                     continue;
                 }

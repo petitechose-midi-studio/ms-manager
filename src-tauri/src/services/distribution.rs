@@ -53,7 +53,7 @@ pub async fn resolve_latest_manifest(
         });
     }
 
-    // Beta/nightly: resolve tag first.
+    // Beta: resolve tag first.
     let tag = resolve_latest_tag(client, channel)
         .await?
         .ok_or_else(|| ApiError::new("no_releases", "no releases found for channel"))?;
@@ -147,7 +147,7 @@ pub async fn list_tags_for_channel(
                     .filter(|r| !r.draft)
                     .filter(|r| match channel {
                         Channel::Stable => !r.prerelease,
-                        Channel::Beta | Channel::Nightly => r.prerelease,
+                        Channel::Beta => r.prerelease,
                     })
                     .map(|r| r.tag)
                     .filter(|t| is_tag_for_channel(channel, t))
@@ -215,7 +215,6 @@ fn ensure_manifest_channel(channel: Channel, manifest: &Manifest) -> ApiResult<(
     let expected = match channel {
         Channel::Stable => ManifestChannel::Stable,
         Channel::Beta => ManifestChannel::Beta,
-        Channel::Nightly => ManifestChannel::Nightly,
     };
     if manifest.channel != expected {
         return Err(ApiError::new(

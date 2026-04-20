@@ -7,7 +7,6 @@ export function formatEnvironmentLabel(source: ArtifactSource): string {
 export function formatChannelLabel(channel: Channel): string {
   if (channel === "stable") return "Stable";
   if (channel === "beta") return "Beta";
-  if (channel === "nightly") return "Nightly";
   return channel;
 }
 
