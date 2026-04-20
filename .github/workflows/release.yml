@@ -17,6 +17,16 @@ on:
         description: "ms-dev-env tooling commit SHA used for candidate metadata"
         required: true
         type: string
+      notes_b64:
+        description: "Optional base64-encoded markdown prepended above auto-notes"
+        required: false
+        default: ""
+        type: string
+      notes_source:
+        description: "Optional source path for external release notes"
+        required: false
+        default: ""
+        type: string
       request_id:
         description: "Optional dispatch correlation id"
         required: false
@@ -196,18 +206,93 @@ jobs:
               raise SystemExit(f"forbidden artifacts present: {forbidden}")
           PY
 
+      - name: Resolve external release notes
+        id: external_notes
+        shell: bash
+        env:
+          INPUT_NOTES_B64: ${{ inputs.notes_b64 }}
+          INPUT_NOTES_SOURCE: ${{ inputs.notes_source }}
+        run: |
+          set -euo pipefail
+          mkdir -p release-notes
+
+          if [ -z "$INPUT_NOTES_B64" ]; then
+            echo "has_external=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          python - <<'PY'
+          import base64
+          import os
+          from pathlib import Path
+
+          raw = os.environ["INPUT_NOTES_B64"]
+          try:
+              decoded = base64.b64decode(raw, validate=True).decode("utf-8")
+          except Exception as exc:  # pragma: no cover - workflow validation
+              raise SystemExit(f"invalid notes_b64 input: {exc}") from exc
+
+          Path("release-notes/external.md").write_text(decoded, encoding="utf-8")
+          PY
+
+          echo "has_external=true" >> "$GITHUB_OUTPUT"
+          echo "notes_file=release-notes/external.md" >> "$GITHUB_OUTPUT"
+
+          if [ -n "$INPUT_NOTES_SOURCE" ]; then
+            echo "External notes source: $INPUT_NOTES_SOURCE"
+          fi
+
+      - name: Build combined release notes
+        id: notes
+        if: ${{ steps.external_notes.outputs.has_external == 'true' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          gh api \
+            --method POST \
+            -H "Accept: application/vnd.github+json" \
+            "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
+            -f tag_name="${{ steps.vars.outputs.release_tag }}" \
+            -f target_commitish="${{ steps.vars.outputs.source_sha }}" \
+            --jq '.body' > release-notes/generated.md
+
+          python - <<'PY'
+          from pathlib import Path
+
+          external = Path("release-notes/external.md").read_text(encoding="utf-8").strip()
+          generated = Path("release-notes/generated.md").read_text(encoding="utf-8").strip()
+          parts = [part for part in (external, generated) if part]
+          Path("release-notes/combined.md").write_text("\n\n".join(parts) + "\n", encoding="utf-8")
+          PY
+
+          echo "notes_file=release-notes/combined.md" >> "$GITHUB_OUTPUT"
+
       - name: Publish final release from candidate assets
         shell: bash
         run: |
           set -euo pipefail
           release_tag="${{ steps.vars.outputs.release_tag }}"
+          notes_file="${{ steps.notes.outputs.notes_file }}"
 
           if gh release view "$release_tag" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
             gh release upload "$release_tag" artifacts/* --repo "${GITHUB_REPOSITORY}" --clobber
+            if [ -n "$notes_file" ]; then
+              gh release edit "$release_tag" --repo "${GITHUB_REPOSITORY}" --notes-file "$notes_file"
+            fi
           else
-            args=(gh release create "$release_tag" artifacts/* --repo "${GITHUB_REPOSITORY}" --title "ms-manager $release_tag" --generate-notes)
+            args=(
+              gh release create "$release_tag" artifacts/* --repo "${GITHUB_REPOSITORY}"
+              --title "ms-manager $release_tag"
+              --target "${{ steps.vars.outputs.source_sha }}"
+            )
             if [ "${{ steps.vars.outputs.prerelease }}" = "true" ]; then
               args+=(--prerelease)
+            fi
+            if [ -n "$notes_file" ]; then
+              args+=(--notes-file "$notes_file")
+            else
+              args+=(--generate-notes)
             fi
             "${args[@]}"
           fi
