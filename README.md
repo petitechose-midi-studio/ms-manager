@@ -8,6 +8,14 @@ distribution repo and verifying:
 - `manifest.json.sig` (Ed25519)
 - each asset sha256
 
+## Release Policy
+
+- `ms-manager` is the control plane for MIDI Studio installation, update, and supervision.
+- Its own GitHub release publishes the app packages only.
+- The canonical end-user content release remains `petitechose-midi-studio/distribution`.
+- `ms-manager` does not define the payload contents and should not embed the canonical release set
+  for `loader`, `oc-bridge`, firmware, or the Bitwig extension inside its own release surface.
+
 ## Development
 
 Prereqs: https://tauri.app/start/prerequisites/
