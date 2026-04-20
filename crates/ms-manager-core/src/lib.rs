@@ -18,13 +18,13 @@ pub use bridge_instances::{
     BRIDGE_INSTANCES_SCHEMA, BridgeApp, BridgeInstanceBinding, BridgeInstancesState, BridgeMode,
     FirmwareTarget,
 };
-pub use channel::{BetaVersion, Channel, NightlyDate, SemVer, compare_tags, is_tag_for_channel};
+pub use channel::{BetaVersion, Channel, SemVer, compare_tags, is_tag_for_channel};
 pub use controller_state::{CONTROLLER_STATE_SCHEMA, ControllerState, LastFlashed};
 pub use crypto::{decode_b64_32, sha256_hex, verify_manifest_sig_b64};
 pub use dist::{
-    DIST_REPO_SLUG, NIGHTLY_PUBLIC_KEY_B64, STABLE_PUBLIC_KEY_B64, asset_url_for_tag,
-    manifest_sig_url_for_tag, manifest_url_for_tag, public_key_b64_for_channel,
-    stable_latest_manifest_url, stable_latest_sig_url,
+    DIST_REPO_SLUG, STABLE_PUBLIC_KEY_B64, asset_url_for_tag, manifest_sig_url_for_tag,
+    manifest_url_for_tag, public_key_b64_for_channel, stable_latest_manifest_url,
+    stable_latest_sig_url,
 };
 pub use error::{CoreError, Result};
 pub use github::{
@@ -61,21 +61,6 @@ mod tests {
     }
 
     #[test]
-    fn latest_tag_for_nightly_picks_latest_date() {
-        let tags = [
-            "nightly-2026-02-01",
-            "nightly-2026-02-02",
-            "nightly-2025-12-31",
-        ]
-        .into_iter()
-        .map(|t| t.to_string())
-        .collect::<Vec<_>>();
-
-        let got = latest_tag_for_channel(Channel::Nightly, &tags).unwrap();
-        assert_eq!(got, "nightly-2026-02-02");
-    }
-
-    #[test]
     fn atom_parser_extracts_tags() {
         let xml = r#"<?xml version=\"1.0\" encoding=\"UTF-8\"?>
 <feed xmlns=\"http://www.w3.org/2005/Atom\">
@@ -83,21 +68,21 @@ mod tests {
     <link rel=\"alternate\" type=\"text/html\" href=\"https://github.com/petitechose-midi-studio/distribution/releases/tag/v0.0.1-beta.2\"/>
   </entry>
   <entry>
-    <link rel=\"alternate\" type=\"text/html\" href=\"https://github.com/petitechose-midi-studio/distribution/releases/tag/nightly-2026-02-02\"/>
+    <link rel=\"alternate\" type=\"text/html\" href=\"https://github.com/petitechose-midi-studio/distribution/releases/tag/v0.0.2-beta.1\"/>
   </entry>
 </feed>
 "#;
 
         let tags = extract_tags_from_releases_atom(xml);
-        assert_eq!(tags, vec!["v0.0.1-beta.2", "nightly-2026-02-02"]);
+        assert_eq!(tags, vec!["v0.0.1-beta.2", "v0.0.2-beta.1"]);
     }
 
     #[test]
     fn select_default_assets_picks_matching_os_arch() {
         let json = r#"{
   "schema": 2,
-  "channel": "nightly",
-  "tag": "nightly-2026-02-02",
+  "channel": "beta",
+  "tag": "v0.1.0-beta.1",
   "published_at": "2026-02-02T05:14:21Z",
   "repos": [{"id": "loader", "url": "https://example.invalid", "sha": "0000000000000000000000000000000000000000"}],
   "assets": [
@@ -134,14 +119,6 @@ mod tests {
     fn compare_tags_beta_orders_beta_n() {
         assert_eq!(
             compare_tags(Channel::Beta, "v0.1.0-beta.2", "v0.1.0-beta.10"),
-            Some(Ordering::Less)
-        );
-    }
-
-    #[test]
-    fn compare_tags_nightly_orders_date() {
-        assert_eq!(
-            compare_tags(Channel::Nightly, "nightly-2026-02-01", "nightly-2026-02-02"),
             Some(Ordering::Less)
         );
     }

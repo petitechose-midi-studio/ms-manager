@@ -26,7 +26,7 @@
 
   let cleanup: (() => void) | null = null;
   let activeTabKey: string | null = null;
-  let lastTagsChannel: "stable" | "beta" | "nightly" | null = null;
+  let lastTagsChannel: "stable" | "beta" | null = null;
   let detailNameDraft = "";
   let detailNameDraftKey: string | null = null;
   let detailRenamingInstanceId: string | null = null;
@@ -259,7 +259,7 @@
     await dash.setBridgeArtifactSource(activeInstance.instance_id, environment);
   }
 
-  async function setActiveInstanceChannel(channel: "stable" | "beta" | "nightly") {
+  async function setActiveInstanceChannel(channel: "stable" | "beta") {
     if (!activeInstance) return;
     await dash.setBridgeInstalledRelease(activeInstance.instance_id, channel, null);
   }

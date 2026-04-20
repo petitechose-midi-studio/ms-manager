@@ -1,4 +1,4 @@
-export type Channel = "stable" | "beta" | "nightly";
+export type Channel = "stable" | "beta";
 export type ArtifactSource = "installed" | "workspace";
 export type FirmwareTarget = "standalone" | "bitwig";
 

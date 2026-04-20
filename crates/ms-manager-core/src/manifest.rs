@@ -7,7 +7,6 @@ use crate::error::{CoreError, Result};
 pub enum ManifestChannel {
     Stable,
     Beta,
-    Nightly,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
