@@ -11,6 +11,7 @@ import {
   nowFromInstall,
   type DashboardBridgeLogEvent,
   type DashboardState,
+  type DashboardUxRecorderEvent,
   type Activity,
 } from "$lib/state/dashboard_shared";
 import { createDashboardStatusController } from "$lib/state/dashboard_status";
@@ -18,6 +19,7 @@ import { createDashboardStatusController } from "$lib/state/dashboard_status";
 const INSTALL_EVENT = "ms-manager://install";
 const FLASH_EVENT = "ms-manager://flash";
 const BRIDGE_LOG_EVENT = "ms-manager://bridge-log";
+const UX_RECORDER_EVENT = "ms-manager://ux-recorder";
 
 export type { DashboardState } from "$lib/state/dashboard_shared";
 
@@ -59,6 +61,10 @@ export function createDashboard(activity: Activity) {
   }
 
   async function copyBridgeEventsToActivity(payload: DashboardBridgeLogEvent) {
+    if (payload.message.includes("UXR ")) {
+      return;
+    }
+
     const snapshot = get(state);
     if (
       payload.instance_id &&
@@ -75,13 +81,38 @@ export function createDashboard(activity: Activity) {
     const displayName =
       matchedInstance?.display_name?.trim() || matchedInstance?.configured_serial || payload.instance_id;
     const prefix = displayName ? `[${displayName}] ` : "";
-    const level =
-      payload.level === "error"
-        ? "error"
-        : payload.level === "warn"
-          ? "warn"
-          : "info";
+    const level = payload.level === "error" ? "error" : payload.level === "warn" ? "warn" : "info";
     queueBridgeLog(level, "bridge", `${prefix}${payload.message}`, payload);
+  }
+
+  function copyUxRecorderEventToActivity(payload: DashboardUxRecorderEvent) {
+    const snapshot = get(state);
+    if (
+      payload.instance_id &&
+      snapshot.activeBridgeInstanceId &&
+      payload.instance_id !== snapshot.activeBridgeInstanceId
+    ) {
+      return;
+    }
+
+    if (payload.type === "session_started") {
+      activity.add("ok", "ux", `session start ${payload.trigger} -> ${payload.path}`, payload);
+      return;
+    }
+    if (payload.type === "session_ended") {
+      activity.add(
+        "ok",
+        "ux",
+        `session end ${payload.reason} ${payload.event_count} events / ${payload.raw_event_count} inputs`,
+        payload,
+      );
+      return;
+    }
+    if (payload.type === "event_recorded") {
+      queueBridgeLog("info", "ux", payload.summary, payload);
+      return;
+    }
+    activity.add("warn", "ux", payload.message, payload);
   }
 
   async function start() {
@@ -143,6 +174,13 @@ export function createDashboard(activity: Activity) {
       void copyBridgeEventsToActivity(event.payload);
     });
 
+    const unlistenUxRecorder = await listen<DashboardUxRecorderEvent>(
+      UX_RECORDER_EVENT,
+      (event) => {
+        copyUxRecorderEventToActivity(event.payload);
+      },
+    );
+
     let devicePolling = false;
     const pollDevice = setInterval(async () => {
       if (devicePolling || get(state).relocating) return;
@@ -182,6 +220,7 @@ export function createDashboard(activity: Activity) {
       unlistenInstall();
       unlistenFlash();
       unlistenBridgeLog();
+      unlistenUxRecorder();
       clearInterval(pollDevice);
       clearInterval(pollBridge);
     };

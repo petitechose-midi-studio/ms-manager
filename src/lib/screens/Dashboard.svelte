@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { LogicalSize } from "@tauri-apps/api/dpi";
-  import { bridgeLogOpen, pathOpen } from "$lib/api/client";
+  import { bridgeLogOpen, pathOpen, uxRecordingSessionRotate, uxRecordingsOpen } from "$lib/api/client";
 
   import type { ActivityEntry, ActivityFilter } from "$lib/state/activity";
   import { createActivityLog, matchesActivityFilter } from "$lib/state/activity";
@@ -189,6 +189,27 @@
       const err = e as { code?: string; message?: string };
       const msg = typeof err?.message === "string" ? err.message : String(e);
       activity.add("warn", "bridge", `open bridge logs failed: ${msg}`, e);
+    }
+  }
+
+  async function openUxRecordings() {
+    try {
+      await uxRecordingsOpen();
+    } catch (e) {
+      const err = e as { code?: string; message?: string };
+      const msg = typeof err?.message === "string" ? err.message : String(e);
+      activity.add("warn", "ux", `open UX folder failed: ${msg}`, e);
+    }
+  }
+
+  async function rotateUxSession() {
+    if (!activeInstance) return;
+    try {
+      await uxRecordingSessionRotate(activeInstance.instance_id);
+    } catch (e) {
+      const err = e as { code?: string; message?: string };
+      const msg = typeof err?.message === "string" ? err.message : String(e);
+      activity.add("warn", "ux", `new UX session failed: ${msg}`, e);
     }
   }
 
@@ -452,6 +473,9 @@
     onFilter={(f) => dash.setActivityFilter(f)}
     onCopy={() => copyActivity($activityEntries, $dashState.activityFilter)}
     onClear={() => activity.clear()}
+    onOpenUxRecordings={openUxRecordings}
+    onRotateUxSession={rotateUxSession}
+    canRotateUxSession={!!activeInstance}
   />
 
   <RelocatePayloadModal

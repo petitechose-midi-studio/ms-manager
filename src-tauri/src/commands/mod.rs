@@ -9,3 +9,4 @@ pub mod midi;
 pub mod payload;
 pub mod settings;
 pub mod status;
+pub mod ux_recorder;

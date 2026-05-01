@@ -11,6 +11,9 @@
   export let onFilter: (f: ActivityFilter) => void;
   export let onCopy: () => void;
   export let onClear: () => void;
+  export let onOpenUxRecordings: () => void;
+  export let onRotateUxSession: () => void;
+  export let canRotateUxSession: boolean;
 
   let logEl: HTMLDivElement | null = null;
   let height = 220;
@@ -29,6 +32,7 @@
     { id: "manager", label: "manager" },
     { id: "flash", label: "flash" },
     { id: "bridge", label: "bridge" },
+    { id: "ux", label: "ux" },
   ];
 
   function isVisible(e: ActivityEntry): boolean {
@@ -119,6 +123,8 @@
       </div>
 
       <div class="tools">
+        <button type="button" onclick={onOpenUxRecordings}>ux folder</button>
+        <button type="button" onclick={onRotateUxSession} disabled={!canRotateUxSession}>new ux</button>
         <button type="button" onclick={onCopy}>copy</button>
         <button type="button" onclick={onClear}>clear</button>
       </div>
@@ -256,6 +262,11 @@
   .filters button.selected {
     color: var(--fg);
     border-color: var(--border-strong);
+  }
+
+  .tools button:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
   }
 
   .tools {

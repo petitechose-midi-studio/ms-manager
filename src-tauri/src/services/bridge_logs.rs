@@ -106,6 +106,7 @@ async fn run_bridge_log_listener(
                 continue;
             };
             let payload = map_bridge_log_event(&app, port, entry);
+            crate::services::ux_recorder::observe_bridge_log(&app, &payload);
             let _ = app.emit(BRIDGE_LOG_EVENT, payload);
         }
     }

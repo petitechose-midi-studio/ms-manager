@@ -275,7 +275,7 @@ export function createDashboardMutationController({
 
   function setActiveBridgeInstance(instanceId: string | null) {
     activity.retain((entry) => {
-      if (entry.scope !== "bridge") return true;
+      if (entry.scope !== "bridge" && entry.scope !== "ux") return true;
       if (!instanceId) return false;
       const details = entry.details as { instance_id?: string | null } | undefined;
       return details?.instance_id === instanceId;

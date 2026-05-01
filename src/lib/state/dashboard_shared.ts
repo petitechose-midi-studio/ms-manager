@@ -18,6 +18,7 @@ import type {
   MidiInventoryStatus,
   Platform,
   Status,
+  UxRecorderEvent,
 } from "$lib/api/types";
 import type { ActivityFilter, ActivityLevel, ActivityScope } from "$lib/state/activity";
 
@@ -92,7 +93,13 @@ export function createInitialDashboardState(): DashboardState {
     device: { connected: false, count: 0, targets: [] },
     midiInventory: null,
     loadingMidiInventory: false,
-    bridge: { installed: false, running: false, paused: false, serial_open: false, instances: [] },
+    bridge: {
+      installed: false,
+      running: false,
+      paused: false,
+      serial_open: false,
+      instances: [],
+    },
     bridgeMutating: false,
     installing: false,
     flashing: false,
@@ -126,7 +133,9 @@ export function apiErrorSuggestedActions(error: ApiError | null): string[] {
   if (!error || !isRecord(error.details)) return [];
   const actions = error.details.suggested_actions;
   if (!Array.isArray(actions)) return [];
-  return actions.filter((value): value is string => typeof value === "string" && value.trim().length > 0);
+  return actions.filter(
+    (value): value is string => typeof value === "string" && value.trim().length > 0,
+  );
 }
 
 export function applyStatus(state: Writable<DashboardState>, status: Status) {
@@ -187,7 +196,8 @@ export function extractPercent(line: string): number | null {
 
 export function nowFromInstall(event: InstallEvent): string {
   if (event.type === "begin") return `Installing ${event.tag} (${event.profile})…`;
-  if (event.type === "downloading") return `Downloading ${event.index}/${event.total}: ${event.filename}`;
+  if (event.type === "downloading")
+    return `Downloading ${event.index}/${event.total}: ${event.filename}`;
   if (event.type === "applying") return `Applying: ${event.step}`;
   if (event.type === "done") return `Installed ${event.tag} (${event.profile})`;
   return "";
@@ -225,6 +235,7 @@ export type DashboardBridgeMode = BridgeMode;
 export type DashboardArtifactSource = ArtifactSource;
 export type DashboardFirmwareTarget = FirmwareTarget;
 export type DashboardBridgeLogEvent = BridgeLogEvent;
+export type DashboardUxRecorderEvent = UxRecorderEvent;
 export type DashboardBindPreset = "standalone" | "bitwig";
 
 export function bindPresetDefaults(preset: DashboardBindPreset): {

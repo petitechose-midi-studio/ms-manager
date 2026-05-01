@@ -18,6 +18,7 @@ import type {
   Status,
   TabOrderResponse,
   TabOrderSetRequest,
+  UxRecordingSessionInfo,
 } from "$lib/api/types";
 
 export function statusGet(): Promise<Status> {
@@ -115,4 +116,12 @@ export function appUpdateCheck(): Promise<AppUpdateStatus> {
 
 export function appUpdateOpenLatest(): Promise<void> {
   return invokeApi<void>("app_update_open_latest");
+}
+
+export function uxRecordingsOpen(): Promise<void> {
+  return invokeApi<void>("ux_recordings_open");
+}
+
+export function uxRecordingSessionRotate(instanceId: string): Promise<UxRecordingSessionInfo> {
+  return invokeApi<UxRecordingSessionInfo>("ux_recording_session_rotate", { instanceId });
 }

@@ -10,7 +10,7 @@ use crate::api_error::{ApiError, ApiResult};
 use crate::layout::PayloadLayout;
 use crate::models::{FlashEvent, FlashMessageLevel};
 use crate::services::process;
-use crate::services::{artifact_resolver, bridge_ctl, bridge_status, device};
+use crate::services::{artifact_resolver, bridge_ctl, bridge_status, device, ux_recorder};
 
 const FLASH_EVENT: &str = "ms-manager://flash";
 const POST_FLASH_READY_TIMEOUT: Duration = Duration::from_secs(20);
@@ -74,6 +74,7 @@ pub async fn flash_firmware_for_binding(
         .await
         .map_err(|error| make_actionable_flash_error(error, binding))?;
     let mut bridge_transition_warnings = Vec::new();
+    ux_recorder::close_session_for_instance(app, layout, &binding.instance_id, "flash_begin");
     if let Some(warning) = run_bridge_control_action(app, binding, BridgeControlAction::Pause).await
     {
         bridge_transition_warnings.push(warning);

@@ -57,6 +57,14 @@ impl PayloadLayout {
         self.root.join("cache")
     }
 
+    pub fn ux_recordings_dir(&self) -> PathBuf {
+        self.root.join("ux-recordings")
+    }
+
+    pub fn ux_recordings_index_file(&self) -> PathBuf {
+        self.ux_recordings_dir().join("index.json")
+    }
+
     pub fn asset_cache_dir(&self) -> PathBuf {
         self.cache_dir().join("assets")
     }

@@ -2,8 +2,8 @@ import type { BridgeLogEvent } from "$lib/api/types";
 import { writable } from "svelte/store";
 
 export type ActivityLevel = "info" | "ok" | "warn" | "error";
-export type ActivityScope = "ui" | "net" | "install" | "flash" | "device" | "fs" | "bridge";
-export type ActivityFilter = "all" | "manager" | "flash" | "bridge";
+export type ActivityScope = "ui" | "net" | "install" | "flash" | "device" | "fs" | "bridge" | "ux";
+export type ActivityFilter = "all" | "manager" | "flash" | "bridge" | "ux";
 
 export type ActivityEntry = {
   id: number;
@@ -34,6 +34,7 @@ const SCOPE_LABELS: Record<ActivityScope, string> = {
   device: "DEVICE",
   fs: "FS",
   bridge: "BRIDGE",
+  ux: "UX",
 };
 
 function pad2(n: number): string {
@@ -46,7 +47,9 @@ function pad3(n: number): string {
 
 function formatActivityTimestamp(ms: number): string {
   const d = new Date(ms);
-  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}.${pad3(d.getMilliseconds())}`;
+  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}.${pad3(
+    d.getMilliseconds(),
+  )}`;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -63,7 +66,10 @@ function isBridgeLogEvent(details: unknown): details is BridgeLogEvent {
   );
 }
 
-function splitSourceLabel(message: string): { sourceLabel: string | null; message: string } {
+function splitSourceLabel(message: string): {
+  sourceLabel: string | null;
+  message: string;
+} {
   const match = /^\[([^\]]+)\]\s+([\s\S]*)$/.exec(message);
   if (!match) {
     return { sourceLabel: null, message };
@@ -74,7 +80,10 @@ function splitSourceLabel(message: string): { sourceLabel: string | null; messag
   };
 }
 
-function activityMarker(entry: ActivityEntry): { marker: string; markerTone: ActivityMarkerTone } {
+function activityMarker(entry: ActivityEntry): {
+  marker: string;
+  markerTone: ActivityMarkerTone;
+} {
   if (isBridgeLogEvent(entry.details)) {
     if (entry.details.kind === "protocol_in") {
       return { marker: "< RX", markerTone: "rx" };
@@ -115,15 +124,19 @@ function activityMarker(entry: ActivityEntry): { marker: string; markerTone: Act
 
 export function presentActivityEntry(entry: ActivityEntry): ActivityPresentation {
   const bridgeDetails = isBridgeLogEvent(entry.details);
-  const sourceParts = bridgeDetails || entry.scope === "bridge"
-    ? splitSourceLabel(entry.message)
-    : { sourceLabel: null, message: entry.message };
+  const sourceParts =
+    bridgeDetails || entry.scope === "bridge"
+      ? splitSourceLabel(entry.message)
+      : { sourceLabel: null, message: entry.message };
   const { sourceLabel, message } = sourceParts;
   const { marker, markerTone } = activityMarker(entry);
   const timestamp = formatActivityTimestamp(entry.ts);
   const scopeLabel = SCOPE_LABELS[entry.scope];
   const sourceText = sourceLabel ? `[${sourceLabel}] ` : "";
-  const text = `${timestamp} ${marker.padEnd(5, " ")} ${scopeLabel.padEnd(7, " ")} ${sourceText}${message}`;
+  const text = `${timestamp} ${marker.padEnd(5, " ")} ${scopeLabel.padEnd(
+    7,
+    " ",
+  )} ${sourceText}${message}`;
 
   return {
     timestamp,
@@ -144,7 +157,8 @@ export function matchesActivityFilter(entry: ActivityEntry, filter: ActivityFilt
   if (filter === "all") return true;
   if (filter === "flash") return entry.scope === "flash";
   if (filter === "bridge") return entry.scope === "bridge";
-  return entry.scope !== "flash" && entry.scope !== "bridge";
+  if (filter === "ux") return entry.scope === "ux";
+  return entry.scope !== "flash" && entry.scope !== "bridge" && entry.scope !== "ux";
 }
 
 export function createActivityLog(limit = 500) {
@@ -159,7 +173,14 @@ export function createActivityLog(limit = 500) {
   }
 
   function add(level: ActivityLevel, scope: ActivityScope, message: string, details?: unknown) {
-    const next: ActivityEntry = { id: nextId++, ts: Date.now(), level, scope, message, details };
+    const next: ActivityEntry = {
+      id: nextId++,
+      ts: Date.now(),
+      level,
+      scope,
+      message,
+      details,
+    };
     entries.update((cur) => {
       return trim([...cur, next]);
     });

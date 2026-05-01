@@ -55,9 +55,15 @@ pub fn run() {
             commands::payload::url_open,
             commands::settings::tab_order_set,
             commands::status::status_get,
+            commands::ux_recorder::ux_recordings_open,
+            commands::ux_recorder::ux_recording_session_rotate,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
 
-    app.run(|_app_handle, _event| {});
+    app.run(|app_handle, event| {
+        if let tauri::RunEvent::Exit = event {
+            services::ux_recorder::close_all_sessions(app_handle, "app_exit");
+        }
+    });
 }

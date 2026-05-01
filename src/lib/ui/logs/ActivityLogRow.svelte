@@ -1,10 +1,19 @@
 <script lang="ts">
+  import type { UxRecorderEvent } from "$lib/api/types";
   import type { ActivityEntry } from "$lib/state/activity";
   import { presentActivityEntry } from "$lib/state/activity";
 
   export let entry: ActivityEntry;
 
   $: line = presentActivityEntry(entry);
+  $: uxEvent = uxRecordedEvent(entry.details);
+
+  function uxRecordedEvent(details: unknown): Extract<UxRecorderEvent, { type: "event_recorded" }> | null {
+    if (!details || typeof details !== "object") return null;
+    const value = details as Partial<UxRecorderEvent>;
+    if (value.type !== "event_recorded") return null;
+    return value as Extract<UxRecorderEvent, { type: "event_recorded" }>;
+  }
 </script>
 
 <div class="row" data-marker-tone={line.markerTone} data-scope={entry.scope} title={line.text}>
@@ -15,7 +24,32 @@
     {#if line.sourceLabel}
       <span class="source">[{line.sourceLabel}]</span>
     {/if}
-    <span class="body">{line.message}</span>
+    {#if uxEvent}
+      <span class="uxBody" data-ux-kind={uxEvent.presentation.kind}>
+        <span class="uxKind">{uxEvent.presentation.kind}</span>
+        <span class="uxAction">{uxEvent.presentation.action}</span>
+        {#if uxEvent.presentation.control}
+          <span class="uxControl">{uxEvent.presentation.control}</span>
+        {/if}
+        {#if uxEvent.presentation.value}
+          <span class="uxValue">{uxEvent.presentation.value}</span>
+        {/if}
+        {#if uxEvent.presentation.target}
+          <span class="uxTarget">{uxEvent.presentation.target}</span>
+        {/if}
+        {#if uxEvent.presentation.effect}
+          <span class="uxEffect">{uxEvent.presentation.effect}</span>
+        {/if}
+        {#if uxEvent.presentation.state}
+          <span class="uxState">{uxEvent.presentation.state}</span>
+        {/if}
+        {#if uxEvent.presentation.detail}
+          <span class="uxDetail">{uxEvent.presentation.detail}</span>
+        {/if}
+      </span>
+    {:else}
+      <span class="body">{line.message}</span>
+    {/if}
   </span>
 </div>
 
@@ -75,6 +109,63 @@
 
   .body {
     color: var(--value);
+  }
+
+  .uxBody {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 7px;
+  }
+
+  .uxKind,
+  .uxAction,
+  .uxControl,
+  .uxValue,
+  .uxTarget,
+  .uxEffect,
+  .uxState,
+  .uxDetail {
+    font-weight: 700;
+  }
+
+  .uxKind {
+    color: var(--log-info);
+  }
+
+  .uxAction {
+    color: var(--muted);
+  }
+
+  .uxControl {
+    color: var(--fg);
+  }
+
+  .uxValue {
+    color: var(--ok);
+  }
+
+  .uxTarget {
+    color: var(--log-source);
+  }
+
+  .uxEffect {
+    color: var(--log-tx);
+  }
+
+  .uxState {
+    color: color-mix(in srgb, var(--muted) 65%, var(--fg) 35%);
+  }
+
+  .uxDetail {
+    color: var(--muted);
+  }
+
+  .uxBody[data-ux-kind="button"] .uxKind {
+    color: var(--warn);
+  }
+
+  .uxBody[data-ux-kind="encoder"] .uxKind {
+    color: var(--log-rx);
   }
 
   .row[data-marker-tone="info"] .marker,

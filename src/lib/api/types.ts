@@ -316,3 +316,51 @@ export type BridgeLogEvent = {
   level?: "debug" | "info" | "warn" | "error" | null;
   message: string;
 };
+
+export type UxRecordingSessionInfo = {
+  instance_id: string;
+  path: string;
+  started_at: string;
+  event_count: number;
+  raw_event_count: number;
+};
+
+export type UxEventPresentation = {
+  kind: string;
+  action: string;
+  control?: string | null;
+  value?: string | null;
+  target?: string | null;
+  effect?: string | null;
+  state?: string | null;
+  detail?: string | null;
+};
+
+export type UxRecorderEvent =
+  | {
+      type: "session_started";
+      instance_id: string;
+      path: string;
+      trigger: string;
+    }
+  | {
+      type: "event_recorded";
+      instance_id: string;
+      path: string;
+      event_count: number;
+      summary: string;
+      presentation: UxEventPresentation;
+    }
+  | {
+      type: "session_ended";
+      instance_id: string;
+      path: string;
+      reason: string;
+      event_count: number;
+      raw_event_count: number;
+    }
+  | {
+      type: "error";
+      instance_id?: string | null;
+      message: string;
+    };
