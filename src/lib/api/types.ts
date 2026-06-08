@@ -317,6 +317,103 @@ export type BridgeLogEvent = {
   message: string;
 };
 
+export type ControllerFsFileType = "missing" | "file" | "directory" | "other";
+
+export type ControllerFsCapabilities = {
+  status: string;
+  rpc_schema: number;
+  max_chunk_size: number;
+  max_file_size_bytes: number;
+  max_list_entries: number;
+  max_path_bytes: number;
+  flags: number;
+};
+
+export type ControllerFsListEntry = {
+  name: string;
+  file_type: ControllerFsFileType;
+  size_bytes: number;
+  name_truncated: boolean;
+};
+
+export type ControllerFsBridgeRequest = {
+  instance_id?: string | null;
+  control_port?: number | null;
+};
+
+export type ControllerFsPathRequest = ControllerFsBridgeRequest & {
+  path: string;
+};
+
+export type ControllerFsDeleteRequest = ControllerFsPathRequest & {
+  recursive?: boolean;
+};
+
+export type ControllerFsRenameRequest = ControllerFsBridgeRequest & {
+  from_path: string;
+  to_path: string;
+};
+
+export type ControllerFsPullFileRequest = ControllerFsBridgeRequest & {
+  remote_path: string;
+  local_path: string;
+  transfer_id?: string | null;
+};
+
+export type ControllerFsPushFileRequest = ControllerFsBridgeRequest & {
+  local_path: string;
+  remote_path: string;
+  transfer_id?: string | null;
+};
+
+export type ControllerFsTransferResponse = {
+  remote_path: string;
+  local_path: string;
+  bytes: number;
+};
+
+export type ControllerFsTransferProgressEvent = {
+  transfer_id: string;
+  direction: "pull" | "push";
+  remote_path: string;
+  local_path: string;
+  bytes_done: number;
+  bytes_total: number;
+};
+
+export type LocalFsFileType = "file" | "directory" | "other";
+
+export type LocalFsListRequest = {
+  path?: string | null;
+};
+
+export type LocalFsPathRequest = {
+  path: string;
+};
+
+export type LocalFsDeleteRequest = LocalFsPathRequest & {
+  recursive?: boolean;
+};
+
+export type LocalFsRenameRequest = {
+  from_path: string;
+  to_path: string;
+};
+
+export type LocalFsEntry = {
+  name: string;
+  path: string;
+  file_type: LocalFsFileType;
+  size_bytes?: number | null;
+};
+
+export type LocalFsListResponse = {
+  root_path: string;
+  path: string;
+  parent_path?: string | null;
+  entries: LocalFsEntry[];
+};
+
 export type UxRecordingSessionInfo = {
   instance_id: string;
   path: string;

@@ -53,9 +53,8 @@ fn open_target_inner(target: impl AsRef<std::ffi::OsStr>, display_target: &str) 
     };
     cmd.arg(target);
 
-    cmd.spawn().map_err(|e| {
-        ApiError::new("open_failed", format!("open {display_target}: {e}"))
-    })?;
+    cmd.spawn()
+        .map_err(|e| ApiError::new("open_failed", format!("open {display_target}: {e}")))?;
 
     Ok(())
 }

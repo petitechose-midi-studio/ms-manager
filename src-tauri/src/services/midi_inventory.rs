@@ -155,7 +155,8 @@ $midiEndpoints = @(
                 let (vid, pid) = matched_target
                     .map(|target| (Some(target.vid), Some(target.pid)))
                     .unwrap_or_else(|| vid_pid_from_pnp_id(parent));
-                let controller_serial = matched_target.and_then(|target| target.serial_number.clone());
+                let controller_serial =
+                    matched_target.and_then(|target| target.serial_number.clone());
                 let manufacturer = matched_target
                     .and_then(|target| target.manufacturer.clone())
                     .or_else(|| endpoint.friendly_name.clone());
@@ -414,7 +415,12 @@ mod windows_winmm {
 
         let lowered_name = name.to_ascii_lowercase();
         let matched = device.targets.iter().find(|target| {
-            let product = target.product.as_deref().unwrap_or("").trim().to_ascii_lowercase();
+            let product = target
+                .product
+                .as_deref()
+                .unwrap_or("")
+                .trim()
+                .to_ascii_lowercase();
             !product.is_empty() && product == lowered_name
         });
 
@@ -434,7 +440,10 @@ mod windows_winmm {
     }
 
     fn wide_to_string(wide: &[u16]) -> String {
-        let len = wide.iter().position(|value| *value == 0).unwrap_or(wide.len());
+        let len = wide
+            .iter()
+            .position(|value| *value == 0)
+            .unwrap_or(wide.len());
         String::from_utf16_lossy(&wide[..len]).trim().to_string()
     }
 

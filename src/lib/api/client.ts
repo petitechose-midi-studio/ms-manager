@@ -11,9 +11,23 @@ import type {
   BridgeInstancesResponse,
   Channel,
   BridgeStatus,
+  ControllerFsBridgeRequest,
+  ControllerFsCapabilities,
+  ControllerFsDeleteRequest,
+  ControllerFsListEntry,
+  ControllerFsPathRequest,
+  ControllerFsPullFileRequest,
+  ControllerFsPushFileRequest,
+  ControllerFsRenameRequest,
+  ControllerFsTransferResponse,
   DeviceStatus,
   InstallState,
   LastFlashed,
+  LocalFsDeleteRequest,
+  LocalFsListRequest,
+  LocalFsListResponse,
+  LocalFsPathRequest,
+  LocalFsRenameRequest,
   MidiInventoryStatus,
   Status,
   TabOrderResponse,
@@ -33,8 +47,58 @@ export function bridgeStatusGet(): Promise<BridgeStatus> {
   return invokeApi<BridgeStatus>("bridge_status_get");
 }
 
+export function controllerFsCapabilitiesGet(
+  request: ControllerFsBridgeRequest,
+): Promise<ControllerFsCapabilities> {
+  return invokeApi<ControllerFsCapabilities>("controller_fs_capabilities_get", { request });
+}
+
+export function controllerFsList(request: ControllerFsPathRequest): Promise<ControllerFsListEntry[]> {
+  return invokeApi<ControllerFsListEntry[]>("controller_fs_list", { request });
+}
+
+export function controllerFsMkdir(request: ControllerFsPathRequest): Promise<void> {
+  return invokeApi<void>("controller_fs_mkdir", { request });
+}
+
+export function controllerFsDelete(request: ControllerFsDeleteRequest): Promise<void> {
+  return invokeApi<void>("controller_fs_delete", { request });
+}
+
+export function controllerFsRename(request: ControllerFsRenameRequest): Promise<void> {
+  return invokeApi<void>("controller_fs_rename", { request });
+}
+
+export function controllerFsPullFile(
+  request: ControllerFsPullFileRequest,
+): Promise<ControllerFsTransferResponse> {
+  return invokeApi<ControllerFsTransferResponse>("controller_fs_pull_file", { request });
+}
+
+export function controllerFsPushFile(
+  request: ControllerFsPushFileRequest,
+): Promise<ControllerFsTransferResponse> {
+  return invokeApi<ControllerFsTransferResponse>("controller_fs_push_file", { request });
+}
+
 export function midiInventoryGet(): Promise<MidiInventoryStatus> {
   return invokeApi<MidiInventoryStatus>("midi_inventory_get");
+}
+
+export function localFsList(request: LocalFsListRequest = {}): Promise<LocalFsListResponse> {
+  return invokeApi<LocalFsListResponse>("local_fs_list", { request });
+}
+
+export function localFsMkdir(request: LocalFsPathRequest): Promise<void> {
+  return invokeApi<void>("local_fs_mkdir", { request });
+}
+
+export function localFsDelete(request: LocalFsDeleteRequest): Promise<void> {
+  return invokeApi<void>("local_fs_delete", { request });
+}
+
+export function localFsRename(request: LocalFsRenameRequest): Promise<void> {
+  return invokeApi<void>("local_fs_rename", { request });
 }
 
 export function bridgeLogOpen(): Promise<void> {
