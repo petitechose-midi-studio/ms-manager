@@ -7,6 +7,7 @@ pub mod bridge_instances;
 pub mod bridge_logs;
 pub mod bridge_process;
 pub mod bridge_status;
+pub mod controller_fs;
 pub mod device;
 pub mod distribution;
 pub mod flash;

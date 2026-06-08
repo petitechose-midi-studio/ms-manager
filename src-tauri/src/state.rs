@@ -434,7 +434,10 @@ mod tests {
             " instance-b ".to_string(),
         ]);
 
-        assert_eq!(normalized, vec!["instance-a".to_string(), "instance-b".to_string()]);
+        assert_eq!(
+            normalized,
+            vec!["instance-a".to_string(), "instance-b".to_string()]
+        );
     }
 
     #[test]

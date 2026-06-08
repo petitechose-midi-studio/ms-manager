@@ -23,9 +23,11 @@ pub fn bridge_instance_bind(
 ) -> ApiResult<BridgeInstanceBindingResponse> {
     let current = state.bridge_instances_get();
     let installed_channel = match request.artifact_source {
-        ms_manager_core::ArtifactSource::Installed => {
-            Some(request.installed_channel.unwrap_or(ms_manager_core::Channel::Stable))
-        }
+        ms_manager_core::ArtifactSource::Installed => Some(
+            request
+                .installed_channel
+                .unwrap_or(ms_manager_core::Channel::Stable),
+        ),
         ms_manager_core::ArtifactSource::Workspace => None,
     };
     let binding = bridge_instances::build_binding(

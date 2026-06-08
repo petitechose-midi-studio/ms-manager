@@ -1,10 +1,12 @@
 pub mod app_update;
 pub mod bridge;
 pub mod bridge_instances;
+pub mod controller_fs;
 pub mod device;
 pub mod distribution;
 pub mod flash;
 pub mod install;
+pub mod local_fs;
 pub mod midi;
 pub mod payload;
 pub mod settings;

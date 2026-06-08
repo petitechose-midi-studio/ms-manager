@@ -15,6 +15,7 @@
   import type { ControllerTabItem } from "$lib/ui/instance/InstanceTabs.svelte";
   import InstanceHeader from "$lib/ui/instance/InstanceHeader.svelte";
   import InstanceConfigurationCard from "$lib/ui/instance/InstanceConfigurationCard.svelte";
+  import InstanceStorageCard from "$lib/ui/instance/InstanceStorageCard.svelte";
   import UnboundControllerView from "$lib/ui/instance/UnboundControllerView.svelte";
   import { apiErrorSuggestedActions, sortInstanceIdsByTabOrder } from "$lib/state/dashboard_shared";
   import { formatSelectedFirmwareLabel, formatTargetLabel } from "$lib/ui/instance/firmwarePresentation";
@@ -24,8 +25,11 @@
   const dashState = dash.state;
   const activityEntries = activity.entries;
 
+  type InstanceDetailSection = "firmware" | "storage";
+
   let cleanup: (() => void) | null = null;
   let activeTabKey: string | null = null;
+  let activeInstanceSection: InstanceDetailSection = "firmware";
   let lastTagsChannel: "stable" | "beta" | null = null;
   let detailNameDraft = "";
   let detailNameDraftKey: string | null = null;
@@ -422,29 +426,52 @@
           onRemove={() => dash.removeBridge(activeInstance.instance_id)}
         />
 
+        <div class="sectionTabs" aria-label="Instance workflows">
+          <button
+            class:active={activeInstanceSection === "firmware"}
+            type="button"
+            aria-pressed={activeInstanceSection === "firmware"}
+            onclick={() => (activeInstanceSection = "firmware")}
+          >
+            Firmware
+          </button>
+          <button
+            class:active={activeInstanceSection === "storage"}
+            type="button"
+            aria-pressed={activeInstanceSection === "storage"}
+            onclick={() => (activeInstanceSection = "storage")}
+          >
+            Storage
+          </button>
+        </div>
+
         <div class="stack">
-          <InstanceConfigurationCard
-            instance={activeInstance}
-            artifactConfigPath={$dashState.artifactConfigPath}
-            disabled={activeBusy}
-            loadingTags={$dashState.loadingTags}
-            {activeTagValue}
-            {activeTagOptions}
-            needsDownload={needsDownloadActiveInstance}
-            canFlash={canFlashActiveInstance}
-            flashing={$dashState.flashing && $dashState.flashingInstanceId === activeInstance.instance_id}
-            selectedFirmware={activeFlashLabel}
-            errorMessage={activeErrorMessage}
-            errorActions={activeErrorActions}
-            flashNotice={activeFlashNotice}
-            onEnvironmentChange={setActiveInstanceEnvironment}
-            onTargetChange={setActiveInstanceTarget}
-            onOpenFolder={() => openSourcePath(activeInstance.artifact_location_path)}
-            onChannelChange={setActiveInstanceChannel}
-            onTagChange={setActiveInstanceTag}
-            onDownload={() => dash.installForBridgeInstance(activeInstance.instance_id)}
-            onFlash={() => dash.flashInstance(activeInstance.instance_id)}
-          />
+          {#if activeInstanceSection === "firmware"}
+            <InstanceConfigurationCard
+              instance={activeInstance}
+              artifactConfigPath={$dashState.artifactConfigPath}
+              disabled={activeBusy}
+              loadingTags={$dashState.loadingTags}
+              {activeTagValue}
+              {activeTagOptions}
+              needsDownload={needsDownloadActiveInstance}
+              canFlash={canFlashActiveInstance}
+              flashing={$dashState.flashing && $dashState.flashingInstanceId === activeInstance.instance_id}
+              selectedFirmware={activeFlashLabel}
+              errorMessage={activeErrorMessage}
+              errorActions={activeErrorActions}
+              flashNotice={activeFlashNotice}
+              onEnvironmentChange={setActiveInstanceEnvironment}
+              onTargetChange={setActiveInstanceTarget}
+              onOpenFolder={() => openSourcePath(activeInstance.artifact_location_path)}
+              onChannelChange={setActiveInstanceChannel}
+              onTagChange={setActiveInstanceTag}
+              onDownload={() => dash.installForBridgeInstance(activeInstance.instance_id)}
+              onFlash={() => dash.flashInstance(activeInstance.instance_id)}
+            />
+          {:else}
+            <InstanceStorageCard instance={activeInstance} disabled={activeBusy || !activeInstance.serial_open} />
+          {/if}
         </div>
       {:else if activeUnboundTarget}
         <UnboundControllerView
@@ -521,6 +548,39 @@
     display: grid;
     gap: var(--space-5);
     min-height: 0;
+  }
+
+  .sectionTabs {
+    display: inline-flex;
+    width: fit-content;
+    gap: var(--space-1);
+    padding: 3px;
+    border: 1px solid var(--border);
+    border-radius: var(--control-radius);
+    background: color-mix(in srgb, var(--panel) 70%, transparent);
+  }
+
+  .sectionTabs button {
+    appearance: none;
+    min-height: var(--control-height);
+    border: 1px solid transparent;
+    border-radius: calc(var(--control-radius) - 2px);
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    font: inherit;
+    font-size: 12px;
+    font-weight: 800;
+    line-height: 16px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 6px 12px;
+  }
+
+  .sectionTabs button.active {
+    border-color: color-mix(in srgb, var(--value) 56%, var(--border));
+    background: color-mix(in srgb, var(--value) 12%, transparent);
+    color: var(--fg);
   }
 
   .stack {

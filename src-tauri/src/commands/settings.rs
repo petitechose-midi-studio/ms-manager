@@ -23,7 +23,10 @@ pub fn tab_order_set(
 
     for instance_id in request.instance_ids {
         let instance_id = instance_id.trim();
-        if instance_id.is_empty() || !known_ids.contains(instance_id) || !seen.insert(instance_id.to_string()) {
+        if instance_id.is_empty()
+            || !known_ids.contains(instance_id)
+            || !seen.insert(instance_id.to_string())
+        {
             continue;
         }
         next.push(instance_id.to_string());
