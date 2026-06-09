@@ -22,6 +22,7 @@
     ControllerFsFileType,
     ControllerFsListEntry,
     ControllerFsTransferProgressEvent,
+    LocalFsChangedEvent,
     LocalFsEntry,
     LocalFsFileType,
   } from "$lib/api/types";
@@ -101,6 +102,7 @@
   let localAnchorPath: string | null = null;
   let remoteAnchorPath: string | null = null;
   let contextMenu: ContextMenuState | null = null;
+  let localRefreshPending = false;
 
   $: sortedRemoteEntries = [...remoteEntries].sort((a, b) => {
     if (a.file_type === "directory" && b.file_type !== "directory") return -1;
@@ -109,6 +111,11 @@
   });
 
   $: canRemoteGoUp = remotePath !== FALLBACK_REMOTE_ROOT;
+  $: if (localRefreshPending && !transferBusy && !contextMenu && !draggedItem) {
+    localRefreshPending = false;
+    void refreshLocalEntries();
+  }
+
   $: if (instance.instance_id !== loadedInstanceId) {
     loadedInstanceId = instance.instance_id;
     remotePath = DEFAULT_REMOTE_ROOT;
@@ -125,20 +132,26 @@
     void loadLocal(null);
     void loadRemote(remotePath, true);
 
-    const refreshTimer = window.setInterval(() => {
-      void refreshVisibleStorage();
-    }, 2500);
-
     let unlistenProgress: (() => void) | null = null;
+    let unlistenLocalFsChanged: (() => void) | null = null;
     void listen<ControllerFsTransferProgressEvent>("controller-fs-transfer-progress", (event) => {
       updateTransferProgress(event.payload);
     }).then((unlisten) => {
       unlistenProgress = unlisten;
     });
+    void listen<LocalFsChangedEvent>("local-fs-changed", () => {
+      if (!transferBusy && !contextMenu && !draggedItem) {
+        void refreshLocalEntries();
+      } else {
+        localRefreshPending = true;
+      }
+    }).then((unlisten) => {
+      unlistenLocalFsChanged = unlisten;
+    });
 
     return () => {
-      window.clearInterval(refreshTimer);
       unlistenProgress?.();
+      unlistenLocalFsChanged?.();
     };
   });
 
@@ -198,11 +211,6 @@
     } finally {
       remoteLoading = false;
     }
-  }
-
-  async function refreshVisibleStorage() {
-    if (transferBusy || contextMenu || draggedItem) return;
-    await Promise.allSettled([refreshLocalEntries(), refreshRemoteEntries()]);
   }
 
   async function refreshLocalEntries() {

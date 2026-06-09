@@ -27,5 +27,6 @@ pub fn apply_background_mode<R: Runtime>(app: &App<R>) {
 
 pub fn spawn_background_services(app: AppHandle) {
     services::bridge::spawn_bridge_supervisor(app.clone());
-    services::bridge_logs::spawn_bridge_log_supervisor(app);
+    services::bridge_logs::spawn_bridge_log_supervisor(app.clone());
+    services::local_fs_watcher::spawn_local_storage_watcher(app);
 }

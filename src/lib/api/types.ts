@@ -381,6 +381,10 @@ export type ControllerFsTransferProgressEvent = {
   bytes_total: number;
 };
 
+export type LocalFsChangedEvent = {
+  path: string;
+};
+
 export type LocalFsFileType = "file" | "directory" | "other";
 
 export type LocalFsListRequest = {
