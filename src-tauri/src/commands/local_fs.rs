@@ -188,7 +188,7 @@ pub(crate) fn resolve_local_storage_path(path: &str) -> ApiResult<PathBuf> {
     Ok(resolved)
 }
 
-fn ensure_local_storage_root() -> ApiResult<PathBuf> {
+pub(crate) fn ensure_local_storage_root() -> ApiResult<PathBuf> {
     let root = local_storage_root()?;
     std::fs::create_dir_all(&root)
         .map_err(|err| io_error("create local storage root", &root, err))?;
