@@ -3,7 +3,10 @@ use ms_manager_core::{
     FirmwareTarget,
 };
 
-pub const HOST_UDP_PORT_START: u16 = 9000;
+pub const HARDWARE_HOST_UDP_PORT_START: u16 = 9000;
+pub const NATIVE_HOST_UDP_PORT_START: u16 = 9100;
+pub const WASM_HOST_UDP_PORT_START: u16 = 9200;
+pub const HOST_UDP_PORT_RANGE: u16 = 8;
 pub const CONTROL_PORT_START: u16 = 7999;
 pub const LOG_BROADCAST_PORT_START: u16 = 9999;
 
@@ -16,23 +19,52 @@ pub fn derive_instance_id(app: &BridgeApp, mode: &BridgeMode, controller_serial:
     )
 }
 
-pub fn allocate_ports(state: &BridgeInstancesState) -> Result<(u16, u16, u16), String> {
+pub fn allocate_ports(
+    state: &BridgeInstancesState,
+    mode: &BridgeMode,
+) -> Result<(u16, u16, u16), String> {
+    let host_udp_port = allocate_host_udp_port(state, mode)?;
+    let (control_port, log_broadcast_port) = allocate_control_ports(state)?;
+
+    Ok((host_udp_port, control_port, log_broadcast_port))
+}
+
+fn allocate_host_udp_port(state: &BridgeInstancesState, mode: &BridgeMode) -> Result<u16, String> {
+    let base = match mode {
+        BridgeMode::Hardware => HARDWARE_HOST_UDP_PORT_START,
+        BridgeMode::NativeSim => NATIVE_HOST_UDP_PORT_START,
+        BridgeMode::WasmSim => WASM_HOST_UDP_PORT_START,
+    };
+
+    for offset in 0..HOST_UDP_PORT_RANGE {
+        let host_udp_port = base + offset;
+        let conflict = state
+            .instances
+            .iter()
+            .any(|instance| instance.host_udp_port == host_udp_port);
+        if !conflict {
+            return Ok(host_udp_port);
+        }
+    }
+
+    Err(format!("no free host UDP port available for {:?}", mode))
+}
+
+fn allocate_control_ports(state: &BridgeInstancesState) -> Result<(u16, u16), String> {
     for offset in 0..=255u16 {
-        let host_udp_port = HOST_UDP_PORT_START + offset;
         let control_port = CONTROL_PORT_START + offset;
         let log_broadcast_port = LOG_BROADCAST_PORT_START + offset;
 
         let conflict = state.instances.iter().any(|instance| {
-            instance.host_udp_port == host_udp_port
-                || instance.control_port == control_port
+            instance.control_port == control_port
                 || instance.log_broadcast_port == log_broadcast_port
         });
         if !conflict {
-            return Ok((host_udp_port, control_port, log_broadcast_port));
+            return Ok((control_port, log_broadcast_port));
         }
     }
 
-    Err("no free bridge port triplet available".to_string())
+    Err("no free bridge control/log port pair available".to_string())
 }
 
 pub fn build_binding(
@@ -61,7 +93,7 @@ pub fn build_binding(
         return Ok(existing.clone());
     }
 
-    let (host_udp_port, control_port, log_broadcast_port) = allocate_ports(state)?;
+    let (host_udp_port, control_port, log_broadcast_port) = allocate_ports(state, &mode)?;
     Ok(BridgeInstanceBinding {
         instance_id,
         display_name: None,
@@ -122,7 +154,7 @@ mod tests {
     }
 
     #[test]
-    fn allocate_ports_skips_used_triplets() {
+    fn allocate_ports_skips_used_hardware_host_and_control_ports() {
         let state = BridgeInstancesState {
             schema: 1,
             instances: vec![BridgeInstanceBinding {
@@ -144,7 +176,34 @@ mod tests {
             }],
         };
 
-        let ports = allocate_ports(&state).unwrap();
+        let ports = allocate_ports(&state, &BridgeMode::Hardware).unwrap();
         assert_eq!(ports, (9001, 8000, 10000));
+    }
+
+    #[test]
+    fn allocate_ports_uses_mode_specific_host_family() {
+        let state = BridgeInstancesState {
+            schema: 1,
+            instances: vec![BridgeInstanceBinding {
+                instance_id: "bitwig-hardware-17081760".to_string(),
+                display_name: None,
+                app: BridgeApp::Bitwig,
+                mode: BridgeMode::Hardware,
+                controller_serial: "17081760".to_string(),
+                controller_vid: 0x16C0,
+                controller_pid: 0x0489,
+                target: FirmwareTarget::Bitwig,
+                artifact_source: ArtifactSource::Installed,
+                installed_channel: Some(Channel::Stable),
+                installed_pinned_tag: None,
+                host_udp_port: 9000,
+                control_port: 7999,
+                log_broadcast_port: 9999,
+                enabled: true,
+            }],
+        };
+
+        let ports = allocate_ports(&state, &BridgeMode::NativeSim).unwrap();
+        assert_eq!(ports, (9100, 8000, 10000));
     }
 }
