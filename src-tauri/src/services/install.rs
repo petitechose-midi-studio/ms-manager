@@ -225,7 +225,11 @@ fn extract_zip_into_blocking(zip_path: &Path, dest_dir: &Path) -> ApiResult<()> 
 fn ensure_bundle_executables(version_dir: &Path) -> ApiResult<()> {
     use std::os::unix::fs::PermissionsExt;
 
-    let candidates = ["bin/oc-bridge", "bin/midi-studio-loader"];
+    let candidates = [
+        "bin/oc-bridge",
+        "bin/midi-studio-loader",
+        "bin/ms-core-file-tool",
+    ];
     for rel in candidates {
         let p = version_dir.join(rel);
         if !p.exists() {

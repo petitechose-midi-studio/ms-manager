@@ -29,6 +29,9 @@ import type {
   LocalFsPathRequest,
   LocalFsRenameRequest,
   MidiInventoryStatus,
+  ProjectMigrationInspectRequest,
+  ProjectMigrationMigrateRequest,
+  ProjectMigrationReport,
   Status,
   TabOrderResponse,
   TabOrderSetRequest,
@@ -79,6 +82,18 @@ export function controllerFsPushFile(
   request: ControllerFsPushFileRequest,
 ): Promise<ControllerFsTransferResponse> {
   return invokeApi<ControllerFsTransferResponse>("controller_fs_push_file", { request });
+}
+
+export function projectMigrationInspect(
+  request: ProjectMigrationInspectRequest,
+): Promise<ProjectMigrationReport> {
+  return invokeApi<ProjectMigrationReport>("project_migration_inspect", { request });
+}
+
+export function projectMigrationMigrate(
+  request: ProjectMigrationMigrateRequest,
+): Promise<ProjectMigrationReport> {
+  return invokeApi<ProjectMigrationReport>("project_migration_migrate", { request });
 }
 
 export function midiInventoryGet(): Promise<MidiInventoryStatus> {

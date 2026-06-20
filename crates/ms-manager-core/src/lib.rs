@@ -12,6 +12,7 @@ mod github;
 mod install_state;
 mod manifest;
 mod platform;
+mod project_migration;
 mod settings;
 
 pub use bridge_instances::{
@@ -37,6 +38,10 @@ pub use manifest::{
     select_install_set_assets,
 };
 pub use platform::{Arch, Os, Platform};
+pub use project_migration::{
+    ProjectLoadReportItem, ProjectLoadStatus, ProjectMigrationError, ProjectMigrationReport,
+    ProjectMigrationStatus, ProjectMigrationTool, parse_project_migration_report,
+};
 pub use settings::{ArtifactSource, SETTINGS_SCHEMA, Settings};
 
 #[cfg(test)]

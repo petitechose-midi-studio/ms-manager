@@ -381,6 +381,41 @@ export type ControllerFsTransferProgressEvent = {
   bytes_total: number;
 };
 
+export type ProjectMigrationStatus = "current" | "migrated" | "partial" | "failed" | "unknown";
+export type ProjectLoadStatus = "ok" | "migrated" | "partial" | "failed" | "unknown";
+
+export type ProjectLoadReportItem = {
+  severity: string;
+  code: string;
+  chunkId: number;
+  sourceMajor: number;
+  sourceMinor: number;
+  targetMajor: number;
+  targetMinor: number;
+};
+
+export type ProjectMigrationReport = {
+  operation: string;
+  fileKind: string;
+  status: ProjectMigrationStatus;
+  loadStatus: ProjectLoadStatus;
+  containerStatus: string;
+  overwriteSafe: boolean;
+  hasUnknownUnsupportedData: boolean;
+  bytesWritten: number;
+  items: ProjectLoadReportItem[];
+};
+
+export type ProjectMigrationInspectRequest = {
+  local_path: string;
+  tool_path?: string | null;
+};
+
+export type ProjectMigrationMigrateRequest = ProjectMigrationInspectRequest & {
+  output_path: string;
+  allow_partial?: boolean;
+};
+
 export type LocalFsChangedEvent = {
   path: string;
 };

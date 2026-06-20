@@ -13,6 +13,7 @@ pub struct WorkspaceArtifacts {
     pub strict: bool,
     pub oc_bridge_exe: PathBuf,
     pub loader_exe: PathBuf,
+    pub ms_core_file_tool: Option<PathBuf>,
     pub firmware_standalone: PathBuf,
     pub firmware_bitwig: PathBuf,
     pub bitwig_extension: PathBuf,
@@ -30,6 +31,7 @@ struct DevArtifactsFile {
 struct DevArtifactsMap {
     oc_bridge_exe: String,
     loader_exe: String,
+    ms_core_file_tool: Option<String>,
     firmware_standalone: String,
     firmware_bitwig: String,
     bitwig_extension: String,
@@ -92,6 +94,11 @@ fn load_workspace_artifacts_from_path(path: &Path) -> ApiResult<WorkspaceArtifac
             "oc_bridge_exe",
         )?,
         loader_exe: resolve_declared_path(&root, &file.artifacts.loader_exe, "loader_exe")?,
+        ms_core_file_tool: resolve_optional_declared_path(
+            &root,
+            file.artifacts.ms_core_file_tool.as_deref(),
+            "ms_core_file_tool",
+        )?,
         firmware_standalone: resolve_declared_path(
             &root,
             &file.artifacts.firmware_standalone,
@@ -205,6 +212,17 @@ fn resolve_declared_path(root: &Path, raw: &str, key: &str) -> ApiResult<PathBuf
     Ok(std::fs::canonicalize(&path).unwrap_or(path))
 }
 
+fn resolve_optional_declared_path(
+    root: &Path,
+    raw: Option<&str>,
+    key: &str,
+) -> ApiResult<Option<PathBuf>> {
+    let Some(raw) = raw else {
+        return Ok(None);
+    };
+    resolve_declared_path(root, raw, key).map(Some)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -248,5 +266,6 @@ mod tests {
             workspace.firmware_bitwig,
             root.join("firmware/bitwig/firmware.hex")
         );
+        assert!(workspace.ms_core_file_tool.is_none());
     }
 }

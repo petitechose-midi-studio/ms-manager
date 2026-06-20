@@ -9,6 +9,7 @@ pub mod install;
 pub mod local_fs;
 pub mod midi;
 pub mod payload;
+pub mod project_migration;
 pub mod settings;
 pub mod status;
 pub mod ux_recorder;

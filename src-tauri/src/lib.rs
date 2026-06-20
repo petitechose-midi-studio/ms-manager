@@ -64,6 +64,8 @@ pub fn run() {
             commands::payload::path_open,
             commands::payload::payload_root_relocate,
             commands::payload::url_open,
+            commands::project_migration::project_migration_inspect,
+            commands::project_migration::project_migration_migrate,
             commands::settings::tab_order_set,
             commands::status::status_get,
             commands::ux_recorder::ux_recordings_open,

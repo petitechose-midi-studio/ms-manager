@@ -12,8 +12,9 @@ pub fn installed_artifact_health(
 ) -> ArtifactHealth {
     let bridge = installed_oc_bridge_exe(layout);
     let loader = installed_loader_exe(layout);
+    let core_file_tool = installed_core_file_tool_exe(layout);
 
-    if !bridge.exists() || !loader.exists() {
+    if !bridge.exists() || !loader.exists() || !core_file_tool.exists() {
         return ArtifactHealth {
             source: ArtifactSource::Installed,
             ready: false,
@@ -54,8 +55,10 @@ pub fn installed_artifact_health_for_binding(
 ) -> ArtifactHealth {
     let bridge = installed_oc_bridge_exe_for_tag(layout, binding.installed_pinned_tag.as_deref());
     let loader = installed_loader_exe_for_tag(layout, binding.installed_pinned_tag.as_deref());
+    let core_file_tool =
+        installed_core_file_tool_exe_for_tag(layout, binding.installed_pinned_tag.as_deref());
 
-    if !bridge.exists() || !loader.exists() {
+    if !bridge.exists() || !loader.exists() || !core_file_tool.exists() {
         return ArtifactHealth {
             source: ArtifactSource::Installed,
             ready: false,
@@ -93,12 +96,7 @@ pub fn installed_artifact_health_for_binding(
 }
 
 pub fn installed_oc_bridge_exe(layout: &PayloadLayout) -> PathBuf {
-    let bin = layout.current_dir().join("bin");
-    if cfg!(windows) {
-        bin.join("oc-bridge.exe")
-    } else {
-        bin.join("oc-bridge")
-    }
+    installed_bin(layout.current_dir().join("bin"), "oc-bridge")
 }
 
 pub fn installed_oc_bridge_exe_for_tag(layout: &PayloadLayout, tag: Option<&str>) -> PathBuf {
@@ -106,25 +104,13 @@ pub fn installed_oc_bridge_exe_for_tag(layout: &PayloadLayout, tag: Option<&str>
         .map(|value| value.trim())
         .filter(|value| !value.is_empty())
     {
-        Some(tag) => {
-            let bin = layout.version_dir(tag).join("bin");
-            if cfg!(windows) {
-                bin.join("oc-bridge.exe")
-            } else {
-                bin.join("oc-bridge")
-            }
-        }
+        Some(tag) => installed_bin(layout.version_dir(tag).join("bin"), "oc-bridge"),
         None => installed_oc_bridge_exe(layout),
     }
 }
 
 pub fn installed_loader_exe(layout: &PayloadLayout) -> PathBuf {
-    let bin = layout.current_dir().join("bin");
-    if cfg!(windows) {
-        bin.join("midi-studio-loader.exe")
-    } else {
-        bin.join("midi-studio-loader")
-    }
+    installed_bin(layout.current_dir().join("bin"), "midi-studio-loader")
 }
 
 pub fn installed_loader_exe_for_tag(layout: &PayloadLayout, tag: Option<&str>) -> PathBuf {
@@ -132,15 +118,30 @@ pub fn installed_loader_exe_for_tag(layout: &PayloadLayout, tag: Option<&str>) -
         .map(|value| value.trim())
         .filter(|value| !value.is_empty())
     {
-        Some(tag) => {
-            let bin = layout.version_dir(tag).join("bin");
-            if cfg!(windows) {
-                bin.join("midi-studio-loader.exe")
-            } else {
-                bin.join("midi-studio-loader")
-            }
-        }
+        Some(tag) => installed_bin(layout.version_dir(tag).join("bin"), "midi-studio-loader"),
         None => installed_loader_exe(layout),
+    }
+}
+
+pub fn installed_core_file_tool_exe(layout: &PayloadLayout) -> PathBuf {
+    installed_bin(layout.current_dir().join("bin"), "ms-core-file-tool")
+}
+
+pub fn installed_core_file_tool_exe_for_tag(layout: &PayloadLayout, tag: Option<&str>) -> PathBuf {
+    match tag
+        .map(|value| value.trim())
+        .filter(|value| !value.is_empty())
+    {
+        Some(tag) => installed_bin(layout.version_dir(tag).join("bin"), "ms-core-file-tool"),
+        None => installed_core_file_tool_exe(layout),
+    }
+}
+
+fn installed_bin(bin: PathBuf, stem: &str) -> PathBuf {
+    if cfg!(windows) {
+        bin.join(format!("{stem}.exe"))
+    } else {
+        bin.join(stem)
     }
 }
 

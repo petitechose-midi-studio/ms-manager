@@ -9,7 +9,7 @@ use crate::services::artifact_paths::{
     ui_path_string as format_ui_path_string,
 };
 use crate::services::installed_artifacts::{
-    installed_artifact_health, installed_artifact_health_for_binding,
+    installed_artifact_health, installed_artifact_health_for_binding, installed_core_file_tool_exe,
     installed_firmware_for_profile, installed_loader_exe, installed_loader_exe_for_tag,
     installed_oc_bridge_exe, installed_oc_bridge_exe_for_tag, installed_version_dir_for_binding,
     resolve_installed_tag,
@@ -90,6 +90,34 @@ pub fn resolve_management_loader_exe(layout: &PayloadLayout) -> ApiResult<PathBu
 
     let path = installed_loader_exe(layout);
     ensure_file_exists("loader_exe", &path)?;
+    Ok(path)
+}
+
+pub fn resolve_management_core_file_tool_exe(layout: &PayloadLayout) -> ApiResult<PathBuf> {
+    if let Ok(workspace) = load_workspace_artifacts() {
+        if let Some(path) = workspace.ms_core_file_tool {
+            ensure_file_exists("ms_core_file_tool", &path)?;
+            return Ok(path);
+        }
+
+        let path = installed_core_file_tool_exe(layout);
+        if path.exists() {
+            ensure_file_exists("ms_core_file_tool", &path)?;
+            return Ok(path);
+        }
+
+        return Err(ApiError::new(
+            "artifact_missing",
+            "workspace artifact config does not declare 'ms_core_file_tool'",
+        )
+        .with_details(serde_json::json!({
+            "config": workspace.config_path.display().to_string(),
+            "installed_fallback": path.display().to_string(),
+        })));
+    }
+
+    let path = installed_core_file_tool_exe(layout);
+    ensure_file_exists("ms_core_file_tool", &path)?;
     Ok(path)
 }
 
