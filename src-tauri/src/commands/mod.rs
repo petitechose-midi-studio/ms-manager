@@ -12,4 +12,5 @@ pub mod payload;
 pub mod project_migration;
 pub mod settings;
 pub mod status;
+pub mod step_preset;
 pub mod ux_recorder;

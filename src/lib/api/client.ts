@@ -33,6 +33,8 @@ import type {
   ProjectMigrationMigrateRequest,
   ProjectMigrationReport,
   Status,
+  StepPresetInspectRequest,
+  StepPresetReport,
   TabOrderResponse,
   TabOrderSetRequest,
   UxRecordingSessionInfo,
@@ -94,6 +96,14 @@ export function projectMigrationMigrate(
   request: ProjectMigrationMigrateRequest,
 ): Promise<ProjectMigrationReport> {
   return invokeApi<ProjectMigrationReport>("project_migration_migrate", { request });
+}
+
+export function stepPresetInspect(request: StepPresetInspectRequest): Promise<StepPresetReport> {
+  return invokeApi<StepPresetReport>("step_preset_inspect", { request });
+}
+
+export function stepPresetValidate(request: StepPresetInspectRequest): Promise<StepPresetReport> {
+  return invokeApi<StepPresetReport>("step_preset_validate", { request });
 }
 
 export function midiInventoryGet(): Promise<MidiInventoryStatus> {

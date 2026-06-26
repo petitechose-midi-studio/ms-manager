@@ -5,6 +5,7 @@
 mod bridge_instances;
 mod channel;
 mod controller_state;
+mod core_file_tool;
 mod crypto;
 mod dist;
 mod error;
@@ -14,6 +15,7 @@ mod manifest;
 mod platform;
 mod project_migration;
 mod settings;
+mod step_preset;
 
 pub use bridge_instances::{
     BRIDGE_INSTANCES_SCHEMA, BridgeApp, BridgeInstanceBinding, BridgeInstancesState, BridgeMode,
@@ -43,6 +45,10 @@ pub use project_migration::{
     ProjectMigrationStatus, ProjectMigrationTool, parse_project_migration_report,
 };
 pub use settings::{ArtifactSource, SETTINGS_SCHEMA, Settings};
+pub use step_preset::{
+    StepPresetError, StepPresetFlags, StepPresetReport, StepPresetStatus, StepPresetTool,
+    parse_step_preset_report,
+};
 
 #[cfg(test)]
 mod tests {

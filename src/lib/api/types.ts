@@ -416,6 +416,39 @@ export type ProjectMigrationMigrateRequest = ProjectMigrationInspectRequest & {
   allow_partial?: boolean;
 };
 
+export type StepPresetStatus =
+  | "ok"
+  | "invalid_argument"
+  | "invalid_format"
+  | "unsupported_version"
+  | "incompatible_target"
+  | "graph_limit_reached"
+  | "buffer_too_small"
+  | "unknown";
+
+export type StepPresetFlags = {
+  rootValues: boolean;
+  graphPayload: boolean;
+  overwrite: boolean;
+};
+
+export type StepPresetReport = {
+  operation: string;
+  fileKind: string;
+  status: StepPresetStatus;
+  rootContext: boolean;
+  rootValues: boolean;
+  stepNodeCount: number;
+  sequenceCount: number;
+  cycleSetCount: number;
+  flags: StepPresetFlags;
+};
+
+export type StepPresetInspectRequest = {
+  local_path: string;
+  tool_path?: string | null;
+};
+
 export type LocalFsChangedEvent = {
   path: string;
 };
