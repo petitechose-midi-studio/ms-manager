@@ -15,6 +15,8 @@
     localFsMkdir,
     localFsRename,
     pathOpen,
+    stepPresetInspect,
+    stepPresetValidate,
   } from "$lib/api/client";
   import type {
     BridgeInstanceStatus,
@@ -25,6 +27,7 @@
     LocalFsChangedEvent,
     LocalFsEntry,
     LocalFsFileType,
+    StepPresetReport,
   } from "$lib/api/types";
   import ArrowUpIcon from "$lib/ui/icons/ArrowUpIcon.svelte";
   import DownloadIcon from "$lib/ui/icons/DownloadIcon.svelte";
@@ -37,12 +40,16 @@
   import RenameIcon from "$lib/ui/icons/RenameIcon.svelte";
   import TrashIcon from "$lib/ui/icons/TrashIcon.svelte";
   import UploadIcon from "$lib/ui/icons/UploadIcon.svelte";
+  import StepPresetStorageSummary from "$lib/ui/instance/StepPresetStorageSummary.svelte";
 
   export let instance: BridgeInstanceStatus;
   export let disabled = false;
 
   const DEFAULT_REMOTE_ROOT = "/midi-studio";
   const FALLBACK_REMOTE_ROOT = "/";
+  const REMOTE_STEP_PRESET_LIBRARY_PATH = "/midi-studio/library/step-presets";
+  const LOCAL_STEP_PRESET_LIBRARY_PATH = "/library/step-presets";
+  const STEP_PRESET_EXTENSION = ".mssp";
 
   type DraggedItem =
     | { side: "local"; name: string; path: string; fileType: LocalFsFileType }
@@ -74,6 +81,8 @@
     fileBytes: Record<string, number>;
   };
 
+  type StepPresetCheckAction = "inspect" | "validate";
+
   let localPath = "";
   let localRootPath = "";
   let localParentPath: string | null = null;
@@ -101,8 +110,19 @@
   let remoteSelectedPaths = new Set<string>();
   let localAnchorPath: string | null = null;
   let remoteAnchorPath: string | null = null;
+  let activeSelectionSide: "local" | "remote" | null = null;
   let contextMenu: ContextMenuState | null = null;
   let localRefreshPending = false;
+  let selectedLocalPreset: StorageItem | null = null;
+  let selectedRemotePreset: StorageItem | null = null;
+  let activeLocalPreset: StorageItem | null = null;
+  let activeRemotePreset: StorageItem | null = null;
+  let presetReportPath: string | null = null;
+  let presetReport: StepPresetReport | null = null;
+  let presetError: string | null = null;
+  let presetLoading = false;
+  let presetLoadingPath: string | null = null;
+  let presetAction: StepPresetCheckAction | null = null;
 
   $: sortedRemoteEntries = [...remoteEntries].sort((a, b) => {
     if (a.file_type === "directory" && b.file_type !== "directory") return -1;
@@ -114,6 +134,21 @@
   $: if (localRefreshPending && !transferBusy && !contextMenu && !draggedItem) {
     localRefreshPending = false;
     void refreshLocalEntries();
+  }
+
+  $: selectedLocalPreset = singleLocalStepPreset();
+  $: selectedRemotePreset = singleRemoteStepPreset();
+  $: activeLocalPreset = activeSelectionSide === "local" ? selectedLocalPreset : null;
+  $: activeRemotePreset = activeSelectionSide === "remote" ? selectedRemotePreset : null;
+  $: if (activeLocalPreset?.path) {
+    if (activeLocalPreset.path !== presetReportPath && !presetLoading) {
+      void inspectStepPreset(activeLocalPreset.path, "inspect");
+    }
+  } else if (presetReportPath) {
+    presetReportPath = null;
+    presetReport = null;
+    presetError = null;
+    presetAction = null;
   }
 
   $: if (instance.instance_id !== loadedInstanceId) {
@@ -183,6 +218,7 @@
       localEntries = result.entries;
       localSelectedPaths = new Set();
       localAnchorPath = null;
+      if (activeSelectionSide === "local") activeSelectionSide = null;
       contextMenu = null;
     } catch (e) {
       localError = messageOf(e);
@@ -204,6 +240,7 @@
       remotePath = normalizeRemotePath(path);
       remoteSelectedPaths = new Set();
       remoteAnchorPath = null;
+      if (activeSelectionSide === "remote") activeSelectionSide = null;
       contextMenu = null;
     } catch (e) {
       remoteError = messageOf(e);
@@ -300,12 +337,17 @@
   function midiStudioFileType(name: string): string | null {
     const lower = name.toLowerCase();
     if (lower === "manifest.json") return "manifest";
+    if (lower.endsWith(STEP_PRESET_EXTENSION)) return "step preset";
     if (lower.endsWith(".mspj")) return "project";
     if (lower.endsWith(".mshj")) return "history";
     if (lower.endsWith(".msmacro")) return "macro";
     if (lower.endsWith(".mspattern")) return "pattern";
     if (lower.endsWith(".msscale")) return "scale";
     return null;
+  }
+
+  function isStepPresetItem(item: StorageItem | DraggedItem | null): boolean {
+    return !!item && item.fileType === "file" && item.name.toLowerCase().endsWith(STEP_PRESET_EXTENSION);
   }
 
   function visibleLocalPaths(): string[] {
@@ -350,6 +392,7 @@
       remoteSelectedPaths = next;
       remoteAnchorPath = path;
     }
+    activeSelectionSide = side;
   }
 
   function ensureContextSelection(item: StorageItem | null) {
@@ -363,6 +406,7 @@
     event.preventDefault();
     event.stopPropagation();
     ensureContextSelection(item);
+    activeSelectionSide = side;
     contextMenu = { side, item, x: event.clientX, y: event.clientY };
   }
 
@@ -380,6 +424,16 @@
     return sortedRemoteEntries
       .map(remoteItem)
       .filter((entry) => remoteSelectedPaths.has(entry.path));
+  }
+
+  function singleLocalStepPreset(): StorageItem | null {
+    const presets = localSelection().filter(isStepPresetItem);
+    return presets.length === 1 ? presets[0] : null;
+  }
+
+  function singleRemoteStepPreset(): StorageItem | null {
+    const presets = remoteSelection().filter(isStepPresetItem);
+    return presets.length === 1 ? presets[0] : null;
   }
 
   function selectedCount(side: "local" | "remote"): number {
@@ -821,6 +875,68 @@
     }
   }
 
+  async function openLocalStepPresetLibrary() {
+    if (localLoading || transferBusy) return;
+    localError = null;
+    try {
+      await localFsMkdir({ path: "/library" });
+      await localFsMkdir({ path: LOCAL_STEP_PRESET_LIBRARY_PATH });
+      await loadLocal(LOCAL_STEP_PRESET_LIBRARY_PATH);
+    } catch (e) {
+      localError = messageOf(e);
+    }
+  }
+
+  async function openRemoteStepPresetLibrary() {
+    if (disabled || remoteLoading || transferBusy) return;
+    remoteError = null;
+    try {
+      await ensureRemoteDirectory("/midi-studio");
+      await ensureRemoteDirectory("/midi-studio/library");
+      await ensureRemoteDirectory(REMOTE_STEP_PRESET_LIBRARY_PATH);
+      await loadRemote(REMOTE_STEP_PRESET_LIBRARY_PATH);
+    } catch (e) {
+      remoteError = messageOf(e);
+    }
+  }
+
+  async function inspectStepPreset(path: string, action: StepPresetCheckAction) {
+    if (!path || presetLoading) return;
+    presetReportPath = path;
+    presetReport = null;
+    presetError = null;
+    presetAction = action;
+    presetLoading = true;
+    presetLoadingPath = path;
+    try {
+      const report =
+        action === "validate"
+          ? await stepPresetValidate({ local_path: path })
+          : await stepPresetInspect({ local_path: path });
+      if (presetReportPath === path) {
+        presetReport = report;
+        presetError = null;
+      }
+    } catch (e) {
+      if (presetReportPath === path) {
+        presetReport = null;
+        presetError = messageOf(e);
+      }
+    } finally {
+      if (presetLoadingPath === path) {
+        presetLoading = false;
+        presetLoadingPath = null;
+      }
+    }
+  }
+
+  async function inspectSelectedStepPreset(action: StepPresetCheckAction) {
+    closeContextMenu();
+    const preset = singleLocalStepPreset();
+    if (!preset) return;
+    await inspectStepPreset(preset.path, action);
+  }
+
   async function createLocalFolder() {
     closeContextMenu();
     const name = safeChildName(window.prompt("New folder name"));
@@ -1050,6 +1166,9 @@
           <div class="rootHint">MIDI Studio exchange root</div>
         </div>
         <div class="actions">
+          <button class="iconButton" type="button" disabled={localLoading || transferBusy} onclick={openLocalStepPresetLibrary} title="Step presets" aria-label="Open PC step preset library">
+            <FolderIcon size={15} />
+          </button>
           <button class="iconButton" type="button" disabled={localLoading || transferBusy} onclick={createLocalFolder} title="New folder" aria-label="New folder">
             <FolderPlusIcon size={15} />
           </button>
@@ -1122,7 +1241,7 @@
                   <span class="fileIcon" aria-hidden="true"><FileIcon size={14} /></span>
                   <span class="entryName">{entry.name}</span>
                   {#if fileKind}
-                    <span class="fileBadge">{fileKind}</span>
+                    <span class="fileBadge" class:stepPreset={fileKind === "step preset"}>{fileKind}</span>
                   {/if}
                 </button>
               {/if}
@@ -1151,6 +1270,9 @@
           <div class="pathBar">{remotePath}</div>
         </div>
         <div class="actions">
+          <button class="iconButton" type="button" disabled={disabled || remoteLoading || transferBusy} onclick={openRemoteStepPresetLibrary} title="Step presets" aria-label="Open controller step preset library">
+            <FolderIcon size={15} />
+          </button>
           <button class="iconButton" type="button" disabled={disabled || remoteLoading || transferBusy} onclick={createRemoteFolder} title="New folder" aria-label="New folder">
             <FolderPlusIcon size={15} />
           </button>
@@ -1238,7 +1360,7 @@
                   <span class="fileIcon" aria-hidden="true"><FileIcon size={14} /></span>
                   <span class="entryName">{entry.name}</span>
                   {#if fileKind}
-                    <span class="fileBadge">{fileKind}</span>
+                    <span class="fileBadge" class:stepPreset={fileKind === "step preset"}>{fileKind}</span>
                   {/if}
                   {#if entry.name_truncated}
                     <span class="truncated">truncated</span>
@@ -1254,6 +1376,21 @@
     </section>
   </div>
 
+  {#if activeLocalPreset}
+    <StepPresetStorageSummary
+      side="local"
+      name={activeLocalPreset.name}
+      loading={presetLoading}
+      action={presetAction}
+      report={presetReport}
+      error={presetError}
+      onInspect={() => inspectStepPreset(activeLocalPreset?.path ?? "", "inspect")}
+      onValidate={() => inspectStepPreset(activeLocalPreset?.path ?? "", "validate")}
+    />
+  {:else if activeRemotePreset}
+    <StepPresetStorageSummary side="remote" name={activeRemotePreset.name} />
+  {/if}
+
   {#if contextMenu}
     <div
       class="contextMenu"
@@ -1268,6 +1405,16 @@
           <span class="menuIcon" aria-hidden="true"><UploadIcon size={14} /></span>
           <span>Upload selected ({selectedCount("local")})</span>
         </button>
+        {#if selectedLocalPreset}
+          <button type="button" role="menuitem" disabled={transferBusy || presetLoading} onclick={() => inspectSelectedStepPreset("inspect")}>
+            <span class="menuIcon" aria-hidden="true"><FileIcon size={14} /></span>
+            <span>Inspect Step Preset</span>
+          </button>
+          <button type="button" role="menuitem" disabled={transferBusy || presetLoading} onclick={() => inspectSelectedStepPreset("validate")}>
+            <span class="menuIcon" aria-hidden="true"><FileIcon size={14} /></span>
+            <span>Validate Step Preset</span>
+          </button>
+        {/if}
         <button type="button" role="menuitem" disabled={!contextMenu.item || selectedCount("local") !== 1 || transferBusy} onclick={() => renameLocalItem(contextMenu?.item ?? null)}>
           <span class="menuIcon" aria-hidden="true"><RenameIcon size={14} /></span>
           <span>Rename</span>
@@ -1572,6 +1719,12 @@
     font-weight: 800;
     text-transform: uppercase;
     letter-spacing: 0.04em;
+  }
+
+  .fileBadge.stepPreset {
+    border-color: color-mix(in srgb, var(--ok) 30%, var(--border));
+    color: color-mix(in srgb, var(--ok) 70%, var(--fg));
+    background: color-mix(in srgb, var(--ok) 9%, transparent);
   }
 
   .truncated {
