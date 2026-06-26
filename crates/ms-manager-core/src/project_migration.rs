@@ -1,8 +1,9 @@
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
+use crate::core_file_tool::run_core_file_tool;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -59,10 +60,7 @@ pub enum ProjectMigrationError {
     #[error("project migration tool returned invalid JSON: {0}")]
     Json(serde_json::Error),
     #[error("project migration tool failed: {status:?}: {stderr}")]
-    ToolFailed {
-        status: Option<i32>,
-        stderr: String,
-    },
+    ToolFailed { status: Option<i32>, stderr: String },
 }
 
 pub struct ProjectMigrationTool {
@@ -108,21 +106,14 @@ impl ProjectMigrationTool {
         I: IntoIterator<Item = S>,
         S: AsRef<std::ffi::OsStr>,
     {
-        let output = Command::new(&self.tool_path)
-            .args(args)
-            .output()
-            .map_err(ProjectMigrationError::Spawn)?;
+        let output =
+            run_core_file_tool(&self.tool_path, args).map_err(ProjectMigrationError::Spawn)?;
+        let report = parse_project_migration_report(&output.stdout)?;
 
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        let report = parse_project_migration_report(stdout.trim())?;
-
-        if !output.status.success()
-            && !matches!(report.status, ProjectMigrationStatus::Partial)
-        {
+        if !output.success && !matches!(report.status, ProjectMigrationStatus::Partial) {
             return Err(ProjectMigrationError::ToolFailed {
-                status: output.status.code(),
-                stderr,
+                status: output.status,
+                stderr: output.stderr,
             });
         }
 

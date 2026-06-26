@@ -68,6 +68,8 @@ pub fn run() {
             commands::project_migration::project_migration_migrate,
             commands::settings::tab_order_set,
             commands::status::status_get,
+            commands::step_preset::step_preset_inspect,
+            commands::step_preset::step_preset_validate,
             commands::ux_recorder::ux_recordings_open,
             commands::ux_recorder::ux_recording_session_rotate,
         ])
