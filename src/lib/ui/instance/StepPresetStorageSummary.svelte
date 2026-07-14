@@ -30,33 +30,66 @@
     }
     return parts.join(" · ");
   }
+
+  function compatibilityLabel(value: StepPresetReport): string {
+    switch (value.compatibility) {
+      case "ready": return "Ready";
+      case "ready_mixed": return "Ready · mixed pitch";
+      case "warning_legacy_defaulted": return "Legacy · chromatic default";
+      case "unsupported_version": return "Unsupported version";
+      case "blocked_invalid": return "Blocked · invalid";
+      default: return "Compatibility unknown";
+    }
+  }
+
+  function scaleLabel(value: StepPresetReport): string {
+    const roots = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"];
+    const types = [
+      "chromatic", "major", "natural minor", "harmonic minor", "melodic minor",
+      "dorian", "phrygian", "lydian", "mixolydian", "locrian",
+      "major pentatonic", "minor pentatonic", "blues", "whole tone",
+    ];
+    const source = `${roots[value.sourceScale.root] ?? "?"} ${types[value.sourceScale.type] ?? "unknown scale"}`;
+    if (value.scalePolicy === "mixed") {
+      const base = value.defaultScalePolicy === "scale_relative" ? "scale-relative" : "chromatic";
+      return `mixed pitch · ${base} default · relative ${source}`;
+    }
+    if (value.scalePolicy === "scale_relative") {
+      return `scale-relative · ${source}`;
+    }
+    return value.scalePolicy === "chromatic" ? "chromatic" : "pitch policy unknown";
+  }
 </script>
 
-<section class="presetSummary" class:mutedSummary={side === "remote"} aria-live="polite">
+<section class="presetSummary" aria-live="polite">
   <div class="presetSummaryHeader">
     <div>
       <div class="presetTitle">{side === "local" ? "Step preset" : "Step preset on controller"}</div>
-      <div class="presetPath">{name}</div>
+      <div class="presetPath">{report?.semanticName || name}</div>
+      {#if report?.technicalId}
+        <code class="technicalId">{report.technicalId}</code>
+      {/if}
     </div>
-    {#if side === "local"}
-      <div class="presetActions">
-        <button class="smallButton" type="button" disabled={loading} onclick={onInspect}>Inspect</button>
-        <button class="smallButton" type="button" disabled={loading} onclick={onValidate}>Validate</button>
-      </div>
-    {/if}
+    <div class="presetActions">
+      <button class="smallButton" type="button" disabled={loading} onclick={onInspect}>Inspect</button>
+      <button class="smallButton" type="button" disabled={loading} onclick={onValidate}>Validate</button>
+    </div>
   </div>
 
-  {#if side === "remote"}
-    <div class="presetLine">Download it to PC storage to inspect and validate the payload.</div>
-  {:else if loading}
+  {#if loading}
     <div class="presetLine">{action === "validate" ? "Validating" : "Inspecting"}…</div>
   {:else if error}
     <div class="presetLine errorText">{error}</div>
   {:else if report}
     <div class="presetReport">
       <span class="presetStatus" class:ok={report.status === "ok"}>{statusLabel(report)}</span>
+      <span
+        class:warning={report.compatibility === "warning_legacy_defaulted" || report.compatibility === "ready_mixed"}
+        class:errorBadge={report.compatibility === "unsupported_version" || report.compatibility === "blocked_invalid"}
+      >{compatibilityLabel(report)}</span>
       <span>{contextLabel(report)}</span>
       <span>{graphLabel(report)}</span>
+      <span>{scaleLabel(report)}</span>
       {#if report.flags.rootValues}
         <span>root values</span>
       {/if}
@@ -65,7 +98,7 @@
       {/if}
     </div>
   {:else}
-    <div class="presetLine">Select a local Step Preset to inspect it.</div>
+    <div class="presetLine">Select a Step Preset to inspect it.</div>
   {/if}
 </section>
 
@@ -98,6 +131,15 @@
     color: var(--muted);
     font-size: 11px;
     line-height: 14px;
+    overflow-wrap: anywhere;
+  }
+
+  .technicalId {
+    display: block;
+    margin-top: 2px;
+    color: var(--muted);
+    font-size: 9px;
+    line-height: 12px;
     overflow-wrap: anywhere;
   }
 
@@ -156,8 +198,14 @@
     border-color: color-mix(in srgb, var(--ok) 35%, var(--border));
   }
 
-  .mutedSummary {
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: center;
+  .presetReport .warning {
+    color: var(--warn);
+    border-color: color-mix(in srgb, var(--warn) 38%, var(--border));
   }
+
+  .presetReport .errorBadge {
+    color: var(--err);
+    border-color: color-mix(in srgb, var(--err) 38%, var(--border));
+  }
+
 </style>

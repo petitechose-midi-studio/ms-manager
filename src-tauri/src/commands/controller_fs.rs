@@ -224,7 +224,7 @@ pub async fn controller_fs_push_file(
     })
 }
 
-fn controller_fs_client(
+pub(crate) fn controller_fs_client(
     state: &AppState,
     instance_id: Option<String>,
     control_port: Option<u16>,
@@ -244,33 +244,45 @@ fn resolve_control_port(
     instance_id: Option<&str>,
     control_port: Option<u16>,
 ) -> ApiResult<u16> {
-    if let Some(port) = control_port {
-        if port == 0 {
-            return Err(ApiError::new(
-                "controller_fs_control_port_invalid",
-                "bridge control port cannot be 0",
-            ));
-        }
-        return Ok(port);
+    if control_port == Some(0) {
+        return Err(ApiError::new(
+            "controller_fs_control_port_invalid",
+            "bridge control port cannot be 0",
+        ));
     }
 
     let bridge_state = state.bridge_instances_get();
-    if bridge_state.instances.is_empty() {
-        return Ok(DEFAULT_BRIDGE_CONTROL_PORT);
-    }
-
     if let Some(instance_id) = instance_id {
-        return bridge_state
+        let instance = bridge_state
             .instances
             .iter()
             .find(|instance| instance.instance_id == instance_id)
-            .map(|instance| instance.control_port)
             .ok_or_else(|| {
                 ApiError::new(
                     "controller_fs_instance_missing",
                     format!("bridge instance not found: {instance_id}"),
                 )
-            });
+            })?;
+        if let Some(requested_port) = control_port {
+            if requested_port != instance.control_port {
+                return Err(ApiError::new(
+                    "controller_fs_endpoint_mismatch",
+                    format!(
+                        "bridge instance {instance_id} uses control port {}, not {requested_port}",
+                        instance.control_port
+                    ),
+                ));
+            }
+        }
+        return Ok(instance.control_port);
+    }
+
+    if let Some(port) = control_port {
+        return Ok(port);
+    }
+
+    if bridge_state.instances.is_empty() {
+        return Ok(DEFAULT_BRIDGE_CONTROL_PORT);
     }
 
     let enabled: Vec<_> = bridge_state
@@ -291,6 +303,6 @@ fn resolve_control_port(
     ))
 }
 
-fn controller_fs_error(err: ControllerFsError) -> ApiError {
+pub(crate) fn controller_fs_error(err: ControllerFsError) -> ApiError {
     ApiError::new(err.kind, err.message)
 }

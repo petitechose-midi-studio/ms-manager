@@ -46,7 +46,8 @@ pub use project_migration::{
 };
 pub use settings::{ArtifactSource, SETTINGS_SCHEMA, Settings};
 pub use step_preset::{
-    StepPresetError, StepPresetFlags, StepPresetReport, StepPresetStatus, StepPresetTool,
+    StepPresetCompatibility, StepPresetError, StepPresetFlags, StepPresetReport,
+    StepPresetScalePolicy, StepPresetSourceScale, StepPresetStatus, StepPresetTool,
     parse_step_preset_report,
 };
 

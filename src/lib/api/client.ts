@@ -32,8 +32,13 @@ import type {
   ProjectMigrationInspectRequest,
   ProjectMigrationMigrateRequest,
   ProjectMigrationReport,
+  RemoteStepPresetIdentityRequest,
+  RemoteStepPresetInspectRequest,
+  RemoteStepPresetRenameRequest,
   Status,
   StepPresetInspectRequest,
+  StepPresetIdentityRequest,
+  StepPresetRenameRequest,
   StepPresetReport,
   TabOrderResponse,
   TabOrderSetRequest,
@@ -104,6 +109,38 @@ export function stepPresetInspect(request: StepPresetInspectRequest): Promise<St
 
 export function stepPresetValidate(request: StepPresetInspectRequest): Promise<StepPresetReport> {
   return invokeApi<StepPresetReport>("step_preset_validate", { request });
+}
+
+export function stepPresetRename(request: StepPresetRenameRequest): Promise<StepPresetReport> {
+  return invokeApi<StepPresetReport>("step_preset_rename", { request });
+}
+
+export function stepPresetDelete(request: StepPresetIdentityRequest): Promise<StepPresetReport> {
+  return invokeApi<StepPresetReport>("step_preset_delete", { request });
+}
+
+export function remoteStepPresetInspect(
+  request: RemoteStepPresetInspectRequest,
+): Promise<StepPresetReport> {
+  return invokeApi<StepPresetReport>("remote_step_preset_inspect", { request });
+}
+
+export function remoteStepPresetValidate(
+  request: RemoteStepPresetInspectRequest,
+): Promise<StepPresetReport> {
+  return invokeApi<StepPresetReport>("remote_step_preset_validate", { request });
+}
+
+export function remoteStepPresetRename(
+  request: RemoteStepPresetRenameRequest,
+): Promise<StepPresetReport> {
+  return invokeApi<StepPresetReport>("remote_step_preset_rename", { request });
+}
+
+export function remoteStepPresetDelete(
+  request: RemoteStepPresetIdentityRequest,
+): Promise<StepPresetReport> {
+  return invokeApi<StepPresetReport>("remote_step_preset_delete", { request });
 }
 
 export function midiInventoryGet(): Promise<MidiInventoryStatus> {
