@@ -75,6 +75,9 @@ pub fn local_fs_list(request: LocalFsListRequest) -> ApiResult<LocalFsListRespon
         let entry = entry.map_err(|err| io_error("read local folder entry", &path, err))?;
         let entry_path = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
+        if is_step_preset_transaction_artifact(&name) {
+            continue;
+        }
         let metadata = entry
             .metadata()
             .map_err(|err| io_error("read local entry metadata", &entry_path, err))?;
@@ -109,6 +112,18 @@ pub fn local_fs_list(request: LocalFsListRequest) -> ApiResult<LocalFsListRespon
         path: relative_path,
         entries,
     })
+}
+
+fn is_step_preset_transaction_artifact(name: &str) -> bool {
+    if name.starts_with('.') && name.ends_with(".ms-manager.lock") {
+        return true;
+    }
+    name.starts_with('.')
+        && name.ends_with(".tmp")
+        && name.contains(".mssp.")
+        && [".rename-", ".backup-", ".failed-", ".delete-"]
+            .iter()
+            .any(|marker| name.contains(marker))
 }
 
 #[tauri::command]

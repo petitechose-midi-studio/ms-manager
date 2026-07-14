@@ -2,7 +2,8 @@ use std::collections::HashMap;
 use std::fmt;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::Path;
-use std::time::Duration;
+use std::sync::atomic::{AtomicU16, Ordering};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -18,10 +19,19 @@ const BINARY_RESPONSE_MAGIC: &[u8; 4] = b"OCRS";
 const BINARY_CONTROL_VERSION: u8 = 1;
 const BINARY_HEADER_BYTES: usize = 16;
 const BINARY_STATUS_OK: u8 = 0;
+// The bridge is local, but it is still an external process. Bound lengths from
+// its response header before allocating so a stale or spoofed listener cannot
+// make the manager reserve attacker-controlled amounts of memory.
+const BINARY_MAX_RESPONSE_PAYLOAD_BYTES: usize = 1024 * 1024;
+const BINARY_MAX_RESPONSE_MESSAGE_BYTES: usize = 16 * 1024;
 
 const FS_RPC_SCHEMA: u8 = 1;
 pub const FS_RPC_MAX_CHUNK_SIZE: usize = 30_720;
 pub const FS_RPC_MAX_LIST_ENTRIES: u8 = 8;
+pub const FS_RPC_SHA256_SIZE: usize = 32;
+pub const FS_RPC_FEATURE_CONDITIONAL_MUTATIONS: u32 = 1 << 3;
+
+static WRITE_SESSION_SEQUENCE: AtomicU16 = AtomicU16::new(1);
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ControllerFsError {
@@ -74,6 +84,10 @@ pub enum FsMessageId {
     RenameResponse = 0xF5,
     CapabilitiesRequest = 0xF6,
     CapabilitiesResponse = 0xF7,
+    ConditionalReplaceRequest = 0xF8,
+    ConditionalReplaceResponse = 0xF9,
+    ConditionalDeleteRequest = 0xFA,
+    ConditionalDeleteResponse = 0xFB,
 }
 
 impl FsMessageId {
@@ -102,6 +116,10 @@ impl FsMessageId {
             0xF5 => Ok(Self::RenameResponse),
             0xF6 => Ok(Self::CapabilitiesRequest),
             0xF7 => Ok(Self::CapabilitiesResponse),
+            0xF8 => Ok(Self::ConditionalReplaceRequest),
+            0xF9 => Ok(Self::ConditionalReplaceResponse),
+            0xFA => Ok(Self::ConditionalDeleteRequest),
+            0xFB => Ok(Self::ConditionalDeleteResponse),
             _ => Err(ControllerFsError::new(
                 "codec_error",
                 format!("unknown filesystem rpc message id: 0x{value:02x}"),
@@ -123,6 +141,7 @@ pub enum FsStatus {
     StorageError,
     InvalidState,
     Unsupported,
+    PreconditionFailed,
 }
 
 impl FsStatus {
@@ -137,6 +156,7 @@ impl FsStatus {
             6 => Ok(Self::StorageError),
             7 => Ok(Self::InvalidState),
             8 => Ok(Self::Unsupported),
+            9 => Ok(Self::PreconditionFailed),
             _ => Err(ControllerFsError::new(
                 "codec_error",
                 format!("unknown filesystem rpc status: {value}"),
@@ -155,6 +175,61 @@ impl FsStatus {
             Self::StorageError => "storage-error",
             Self::InvalidState => "invalid-state",
             Self::Unsupported => "unsupported",
+            Self::PreconditionFailed => "precondition-failed",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[repr(u8)]
+#[serde(rename_all = "kebab-case")]
+pub enum FsConditionalMutationOutcome {
+    None,
+    Applied,
+    AlreadyApplied,
+}
+
+impl FsConditionalMutationOutcome {
+    fn from_u8(value: u8) -> ControllerFsResult<Self> {
+        match value {
+            0 => Ok(Self::None),
+            1 => Ok(Self::Applied),
+            2 => Ok(Self::AlreadyApplied),
+            _ => Err(ControllerFsError::new(
+                "codec_error",
+                format!("unknown conditional mutation outcome: {value}"),
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[repr(u8)]
+#[serde(rename_all = "kebab-case")]
+pub enum FsConditionalMutationSubject {
+    None,
+    Source,
+    Staging,
+}
+
+impl FsConditionalMutationSubject {
+    fn from_u8(value: u8) -> ControllerFsResult<Self> {
+        match value {
+            0 => Ok(Self::None),
+            1 => Ok(Self::Source),
+            2 => Ok(Self::Staging),
+            _ => Err(ControllerFsError::new(
+                "codec_error",
+                format!("unknown conditional mutation subject: {value}"),
+            )),
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::None => "transaction",
+            Self::Source => "source",
+            Self::Staging => "staging file",
         }
     }
 }
@@ -203,6 +278,24 @@ pub struct FsCapabilities {
     pub feature_flags: u32,
 }
 
+impl FsCapabilities {
+    pub fn supports_conditional_mutations(&self) -> bool {
+        self.status == FsStatus::Ok
+            && self.rpc_schema == FS_RPC_SCHEMA
+            && (self.feature_flags & FS_RPC_FEATURE_CONDITIONAL_MUTATIONS) != 0
+    }
+
+    pub fn require_conditional_mutations(&self) -> ControllerFsResult<()> {
+        if self.supports_conditional_mutations() {
+            return Ok(());
+        }
+        Err(ControllerFsError::new(
+            "unsupported_feature",
+            "controller firmware does not advertise conditional filesystem mutations",
+        ))
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct FsStat {
     pub status: FsStatus,
@@ -221,6 +314,7 @@ pub struct FsListEntry {
 #[derive(Debug, Clone)]
 struct FsListPage {
     status: FsStatus,
+    start_index: u16,
     has_more: bool,
     entries: Vec<FsListEntry>,
 }
@@ -241,6 +335,21 @@ struct FsWriteResponse {
 #[derive(Debug, Clone)]
 struct FsStatusResponse {
     status: FsStatus,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct FsConditionalMutationResult {
+    pub outcome: FsConditionalMutationOutcome,
+    pub operation_id: u32,
+}
+
+#[derive(Debug, Clone)]
+struct FsConditionalMutationResponse {
+    status: FsStatus,
+    outcome: FsConditionalMutationOutcome,
+    subject: FsConditionalMutationSubject,
+    operation_id: u32,
+    observed_sha256: [u8; FS_RPC_SHA256_SIZE],
 }
 
 #[derive(Debug, Clone)]
@@ -335,37 +444,55 @@ impl BridgeBinaryClient {
 
         let write_result = {
             let stream = self.connect().await?;
-            tokio::time::timeout(timeout, stream.write_all(&packet))
-                .await
-                .map_err(|_| ControllerFsError::new("bridge_timeout", "binary write timeout"))?
+            tokio::time::timeout(timeout, stream.write_all(&packet)).await
         };
-        if let Err(err) = write_result {
-            self.stream = None;
-            return Err(bridge_io_error(err));
+        match write_result {
+            Err(_) => {
+                // Never reuse a stream after an ambiguous timeout: the late
+                // response would otherwise be consumed by the retry and its
+                // token would no longer match.
+                self.stream = None;
+                return Err(ControllerFsError::new(
+                    "bridge_timeout",
+                    "binary write timeout",
+                ));
+            }
+            Ok(Err(err)) => {
+                self.stream = None;
+                return Err(bridge_io_error(err));
+            }
+            Ok(Ok(())) => {}
         }
 
         let mut responses: Vec<Option<Vec<u8>>> = vec![None; requests.len()];
         while !token_to_index.is_empty() {
             let read_result = {
                 let stream = self.connect().await?;
-                tokio::time::timeout(timeout, read_binary_response(stream))
-                    .await
-                    .map_err(|_| ControllerFsError::new("bridge_timeout", "binary read timeout"))?
+                tokio::time::timeout(timeout, read_binary_response(stream)).await
             };
             let response = match read_result {
-                Ok(value) => value,
-                Err(err) => {
+                Err(_) => {
+                    self.stream = None;
+                    return Err(ControllerFsError::new(
+                        "bridge_timeout",
+                        "binary read timeout",
+                    ));
+                }
+                Ok(Ok(value)) => value,
+                Ok(Err(err)) => {
                     self.stream = None;
                     return Err(bridge_io_error(err));
                 }
             };
             let Some(index) = token_to_index.remove(&response.token) else {
+                self.stream = None;
                 return Err(ControllerFsError::new(
                     "protocol_error",
                     format!("unexpected binary response token: {}", response.token),
                 ));
             };
             if response.status != BINARY_STATUS_OK {
+                self.stream = None;
                 return Err(ControllerFsError::new(
                     "controller_rpc_failed",
                     if response.message.is_empty() {
@@ -447,6 +574,18 @@ async fn read_binary_response(stream: &mut TcpStream) -> std::io::Result<BinaryC
     let token = u16::from_le_bytes([header[6], header[7]]);
     let payload_len = u32::from_le_bytes([header[8], header[9], header[10], header[11]]) as usize;
     let message_len = u16::from_le_bytes([header[12], header[13]]) as usize;
+    if payload_len > BINARY_MAX_RESPONSE_PAYLOAD_BYTES {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("binary response payload is too large: {payload_len} bytes"),
+        ));
+    }
+    if message_len > BINARY_MAX_RESPONSE_MESSAGE_BYTES {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("binary response message is too large: {message_len} bytes"),
+        ));
+    }
     let mut payload = vec![0u8; payload_len];
     if payload_len > 0 {
         stream.read_exact(&mut payload).await?;
@@ -467,17 +606,22 @@ async fn read_binary_response(stream: &mut TcpStream) -> std::io::Result<BinaryC
 pub struct ControllerFsClient {
     bridge: BridgeBinaryClient,
     next_request_id: u16,
+    next_write_session_id: u16,
     chunk_size: usize,
     pipeline_window: usize,
+    conditional_mutations_supported: Option<bool>,
 }
 
 impl ControllerFsClient {
     pub fn new(bridge: BridgeBinaryClient) -> Self {
+        let next_write_session_id = initial_write_session_id(bridge.port);
         Self {
             bridge,
             next_request_id: 1,
+            next_write_session_id,
             chunk_size: FS_RPC_MAX_CHUNK_SIZE,
             pipeline_window: DEFAULT_PIPELINE_WINDOW,
+            conditional_mutations_supported: None,
         }
     }
 
@@ -515,7 +659,8 @@ impl ControllerFsClient {
                 FsMessageId::CapabilitiesResponse,
             )
             .await?;
-        let decoded = decode_capabilities_response(&response)?;
+        let decoded = decode_capabilities_response(&response, request_id)?;
+        self.conditional_mutations_supported = Some(decoded.supports_conditional_mutations());
         Ok(decoded)
     }
 
@@ -543,12 +688,30 @@ impl ControllerFsClient {
             if decoded.status != FsStatus::Ok {
                 return Err(remote_status_error("list", path, decoded.status));
             }
-            start_index = start_index.saturating_add(decoded.entries.len() as u16);
+            if decoded.start_index != start_index {
+                return Err(ControllerFsError::new(
+                    "invalid_state",
+                    format!(
+                        "list response index mismatch: expected {start_index}, got {}",
+                        decoded.start_index
+                    ),
+                ));
+            }
             let has_more = decoded.has_more;
+            if has_more && decoded.entries.is_empty() {
+                return Err(ControllerFsError::new(
+                    "protocol_error",
+                    "list response requested another page without making progress",
+                ));
+            }
+            let page_len = decoded.entries.len() as u16;
             entries.extend(decoded.entries);
             if !has_more {
                 return Ok(entries);
             }
+            start_index = start_index.checked_add(page_len).ok_or_else(|| {
+                ControllerFsError::new("protocol_error", "list response index overflow")
+            })?;
         }
     }
 
@@ -556,6 +719,20 @@ impl ControllerFsClient {
         &mut self,
         path: &str,
         destination: &Path,
+        on_progress: F,
+    ) -> ControllerFsResult<usize>
+    where
+        F: FnMut(usize, usize),
+    {
+        self.pull_file_to_path_with_progress_limit(path, destination, u32::MAX, on_progress)
+            .await
+    }
+
+    pub async fn pull_file_to_path_with_progress_limit<F>(
+        &mut self,
+        path: &str,
+        destination: &Path,
+        max_bytes: u32,
         mut on_progress: F,
     ) -> ControllerFsResult<usize>
     where
@@ -569,6 +746,12 @@ impl ControllerFsClient {
             return Err(ControllerFsError::new(
                 "not_file",
                 format!("remote path is not a file: {path}"),
+            ));
+        }
+        if stat.size_bytes > max_bytes {
+            return Err(ControllerFsError::new(
+                "too_large",
+                format!("remote file exceeds the allowed size ({max_bytes} bytes): {path}"),
             ));
         }
 
@@ -616,6 +799,17 @@ impl ControllerFsClient {
                     return Err(ControllerFsError::new(
                         "invalid_state",
                         "read returned no data before EOF",
+                    ));
+                }
+                if decoded.data.len() != item.size {
+                    return Err(ControllerFsError::new(
+                        "protocol_error",
+                        format!(
+                            "read response size mismatch at offset {}: expected {}, got {}",
+                            item.offset,
+                            item.size,
+                            decoded.data.len()
+                        ),
                     ));
                 }
                 offset = offset.saturating_add(decoded.data.len() as u32);
@@ -679,17 +873,38 @@ impl ControllerFsClient {
             )
         })?;
 
-        let session_id = self.request_id();
+        // Session ids are client-owned by the firmware protocol. Do not reuse
+        // the deterministic request-id sequence: after an ambiguous begin we
+        // issue a best-effort abort, and a predictable id could otherwise
+        // collide with (and abort) another local client's active upload.
+        let session_id = self.write_session_id();
         let begin_id = self.request_id();
         let begin = encode_write_begin_request(begin_id, session_id, path, total_bytes as u32)?;
-        let begin_response = self
+        let begin_response = match self
             .write_rpc(begin, FsMessageId::WriteBeginResponse, begin_id)
-            .await?;
+            .await
+        {
+            Ok(value) => value,
+            Err(err) => {
+                // The request may have reached the controller even when its
+                // response was lost or malformed. Abort by the known session
+                // id so the next transaction is not left permanently busy.
+                let _ = self.abort_write(session_id).await;
+                return Err(err);
+            }
+        };
         if begin_response.status != FsStatus::Ok {
             return Err(remote_status_error(
                 "write-begin",
                 path,
                 begin_response.status,
+            ));
+        }
+        if begin_response.session_id != session_id || begin_response.bytes_written != 0 {
+            let _ = self.abort_write(session_id).await;
+            return Err(ControllerFsError::new(
+                "invalid_state",
+                "write begin response mismatch",
             ));
         }
 
@@ -726,7 +941,13 @@ impl ControllerFsClient {
                 }
             };
             for (item, response) in batch.iter().zip(responses.iter()) {
-                let decoded = decode_write_response(response, item.request_id)?;
+                let decoded = match decode_write_response(response, item.request_id) {
+                    Ok(value) => value,
+                    Err(err) => {
+                        let _ = self.abort_write(session_id).await;
+                        return Err(err);
+                    }
+                };
                 if decoded.status != FsStatus::Ok {
                     let _ = self.abort_write(session_id).await;
                     return Err(remote_status_error("write-chunk", path, decoded.status));
@@ -761,6 +982,16 @@ impl ControllerFsClient {
                 "write-commit",
                 path,
                 commit_response.status,
+            ));
+        }
+        if commit_response.session_id != session_id || commit_response.bytes_written != 0 {
+            // The commit may already be durable. Abort is therefore only a
+            // best-effort session cleanup; callers still receive an explicit
+            // protocol mismatch instead of accepting an unrelated response.
+            let _ = self.abort_write(session_id).await;
+            return Err(ControllerFsError::new(
+                "invalid_state",
+                "write commit response mismatch",
             ));
         }
         Ok(total_bytes as usize)
@@ -805,13 +1036,102 @@ impl ControllerFsClient {
         .await
     }
 
+    /// Replaces `current_path` with a previously uploaded staging file in one
+    /// firmware transaction. Callers must fetch capabilities and require
+    /// `conditional-mutations` before uploading so older schema-1 firmware is
+    /// rejected without sending an unknown message id.
+    pub async fn conditional_replace(
+        &mut self,
+        operation_id: u32,
+        current_path: &str,
+        staging_path: &str,
+        expected_source_sha256: &[u8; FS_RPC_SHA256_SIZE],
+        replacement_sha256: &[u8; FS_RPC_SHA256_SIZE],
+    ) -> ControllerFsResult<FsConditionalMutationResult> {
+        self.require_negotiated_conditional_mutations()?;
+        let request_id = self.request_id();
+        let payload = encode_conditional_replace_request(
+            request_id,
+            operation_id,
+            current_path,
+            staging_path,
+            expected_source_sha256,
+            replacement_sha256,
+        )?;
+        let response = self
+            .rpc(payload, FsMessageId::ConditionalReplaceResponse)
+            .await?;
+        let decoded = decode_conditional_mutation_response(
+            &response,
+            FsMessageId::ConditionalReplaceResponse,
+            request_id,
+            operation_id,
+        )?;
+        checked_conditional_result("replace", current_path, decoded)
+    }
+
+    /// Deletes `path` only if its SHA-256 still matches the inspected source.
+    /// A missing path is an idempotent success (`already-applied`).
+    pub async fn conditional_delete(
+        &mut self,
+        operation_id: u32,
+        path: &str,
+        expected_source_sha256: &[u8; FS_RPC_SHA256_SIZE],
+    ) -> ControllerFsResult<FsConditionalMutationResult> {
+        self.require_negotiated_conditional_mutations()?;
+        let request_id = self.request_id();
+        let payload = encode_conditional_delete_request(
+            request_id,
+            operation_id,
+            path,
+            expected_source_sha256,
+        )?;
+        let response = self
+            .rpc(payload, FsMessageId::ConditionalDeleteResponse)
+            .await?;
+        let decoded = decode_conditional_mutation_response(
+            &response,
+            FsMessageId::ConditionalDeleteResponse,
+            request_id,
+            operation_id,
+        )?;
+        checked_conditional_result("delete", path, decoded)
+    }
+
+    fn require_negotiated_conditional_mutations(&self) -> ControllerFsResult<()> {
+        match self.conditional_mutations_supported {
+            Some(true) => Ok(()),
+            Some(false) => Err(ControllerFsError::new(
+                "unsupported_feature",
+                "controller firmware does not advertise conditional filesystem mutations",
+            )),
+            None => Err(ControllerFsError::new(
+                "capability_required",
+                "filesystem capabilities must be negotiated before a conditional mutation",
+            )),
+        }
+    }
+
     async fn abort_write(&mut self, session_id: u16) -> ControllerFsResult<()> {
         let request_id = self.request_id();
         let payload = encode_write_abort_request(request_id, session_id)?;
-        let _ = self
+        let response = self
             .write_rpc(payload, FsMessageId::WriteAbortResponse, request_id)
             .await?;
-        Ok(())
+        if response.session_id != session_id || response.bytes_written != 0 {
+            return Err(ControllerFsError::new(
+                "invalid_state",
+                "write abort response mismatch",
+            ));
+        }
+        if matches!(response.status, FsStatus::Ok | FsStatus::InvalidState) {
+            return Ok(());
+        }
+        Err(remote_status_error(
+            "write-abort",
+            "active write session",
+            response.status,
+        ))
     }
 
     async fn rpc(
@@ -888,6 +1208,7 @@ impl ControllerFsClient {
             batch.push(ReadRequest {
                 request_id,
                 offset: cursor,
+                size,
                 payload,
             });
             cursor += size as u32;
@@ -934,11 +1255,36 @@ impl ControllerFsClient {
         }
         value
     }
+
+    fn write_session_id(&mut self) -> u16 {
+        let value = self.next_write_session_id;
+        self.next_write_session_id = self.next_write_session_id.wrapping_add(1);
+        if self.next_write_session_id == 0 {
+            self.next_write_session_id = 1;
+        }
+        value
+    }
+}
+
+fn initial_write_session_id(port: u16) -> u16 {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos() as u64;
+    let sequence = u64::from(WRITE_SESSION_SEQUENCE.fetch_add(1, Ordering::Relaxed));
+    let mixed = stamp
+        ^ stamp.rotate_right(17)
+        ^ u64::from(std::process::id()).rotate_left(11)
+        ^ u64::from(port).rotate_left(29)
+        ^ sequence.rotate_left(43);
+    let folded = (mixed ^ (mixed >> 16) ^ (mixed >> 32) ^ (mixed >> 48)) as u16;
+    folded.max(1)
 }
 
 struct ReadRequest {
     request_id: u16,
     offset: u32,
+    size: usize,
     payload: Vec<u8>,
 }
 
@@ -1065,6 +1411,38 @@ fn encode_rename_request(
     frame(FsMessageId::RenameRequest, request_id, &payload)
 }
 
+fn encode_conditional_replace_request(
+    request_id: u16,
+    operation_id: u32,
+    current_path: &str,
+    staging_path: &str,
+    expected_source_sha256: &[u8; FS_RPC_SHA256_SIZE],
+    replacement_sha256: &[u8; FS_RPC_SHA256_SIZE],
+) -> ControllerFsResult<Vec<u8>> {
+    let mut payload = Vec::with_capacity(
+        4 + (2 * FS_RPC_SHA256_SIZE) + current_path.len() + staging_path.len() + 2,
+    );
+    payload.extend_from_slice(&operation_id.to_le_bytes());
+    payload.extend_from_slice(expected_source_sha256);
+    payload.extend_from_slice(replacement_sha256);
+    payload.extend_from_slice(&encoded_string(current_path)?);
+    payload.extend_from_slice(&encoded_string(staging_path)?);
+    frame(FsMessageId::ConditionalReplaceRequest, request_id, &payload)
+}
+
+fn encode_conditional_delete_request(
+    request_id: u16,
+    operation_id: u32,
+    path: &str,
+    expected_source_sha256: &[u8; FS_RPC_SHA256_SIZE],
+) -> ControllerFsResult<Vec<u8>> {
+    let mut payload = Vec::with_capacity(4 + FS_RPC_SHA256_SIZE + path.len() + 1);
+    payload.extend_from_slice(&operation_id.to_le_bytes());
+    payload.extend_from_slice(expected_source_sha256);
+    payload.extend_from_slice(&encoded_string(path)?);
+    frame(FsMessageId::ConditionalDeleteRequest, request_id, &payload)
+}
+
 fn frame(message_id: FsMessageId, request_id: u16, payload: &[u8]) -> ControllerFsResult<Vec<u8>> {
     let mut out = Vec::new();
     out.push(message_id as u8);
@@ -1079,7 +1457,16 @@ fn decode_frame(data: &[u8]) -> ControllerFsResult<FsFrame> {
     let mut reader = Reader::new(data);
     let message_id = FsMessageId::from_u8(reader.u8()?)?;
     let name_len = reader.u8()? as usize;
-    let _name = reader.bytes(name_len)?;
+    let name = reader.bytes(name_len)?;
+    if name != message_name(message_id).as_bytes() {
+        return Err(ControllerFsError::new(
+            "codec_error",
+            format!(
+                "filesystem rpc message name does not match id 0x{:02x}",
+                message_id as u8
+            ),
+        ));
+    }
     let schema = reader.u8()?;
     let request_id = reader.u16()?;
     Ok(FsFrame {
@@ -1090,12 +1477,16 @@ fn decode_frame(data: &[u8]) -> ControllerFsResult<FsFrame> {
     })
 }
 
-fn decode_capabilities_response(data: &[u8]) -> ControllerFsResult<FsCapabilities> {
-    let frame = response_frame(data, FsMessageId::CapabilitiesResponse)?;
+fn decode_capabilities_response(
+    data: &[u8],
+    expected_request_id: u16,
+) -> ControllerFsResult<FsCapabilities> {
+    let frame =
+        checked_response_frame(data, FsMessageId::CapabilitiesResponse, expected_request_id)?;
     let mut reader = Reader::new(&frame.payload);
     let status = FsStatus::from_u8(reader.u8()?)?;
     if status != FsStatus::Ok {
-        return Ok(FsCapabilities {
+        let response = FsCapabilities {
             status,
             rpc_schema: 0,
             max_chunk_size: 0,
@@ -1103,7 +1494,9 @@ fn decode_capabilities_response(data: &[u8]) -> ControllerFsResult<FsCapabilitie
             max_list_entries: 0,
             max_path_length: 0,
             feature_flags: 0,
-        });
+        };
+        reader.expect_empty()?;
+        return Ok(response);
     }
     let response = FsCapabilities {
         status,
@@ -1123,6 +1516,7 @@ fn decode_stat_response(data: &[u8], expected_request_id: u16) -> ControllerFsRe
     let mut reader = Reader::new(&frame.payload);
     let status = FsStatus::from_u8(reader.u8()?)?;
     if status != FsStatus::Ok {
+        reader.expect_empty()?;
         return Ok(FsStat {
             status,
             file_type: FsFileType::Missing,
@@ -1143,13 +1537,15 @@ fn decode_list_response(data: &[u8], expected_request_id: u16) -> ControllerFsRe
     let mut reader = Reader::new(&frame.payload);
     let status = FsStatus::from_u8(reader.u8()?)?;
     if status != FsStatus::Ok {
+        reader.expect_empty()?;
         return Ok(FsListPage {
             status,
+            start_index: 0,
             has_more: false,
             entries: Vec::new(),
         });
     }
-    let _start_index = reader.u16()?;
+    let start_index = reader.u16()?;
     let entry_count = reader.u8()?;
     let has_more = reader.bool()?;
     if entry_count > FS_RPC_MAX_LIST_ENTRIES {
@@ -1170,6 +1566,7 @@ fn decode_list_response(data: &[u8], expected_request_id: u16) -> ControllerFsRe
     reader.expect_empty()?;
     Ok(FsListPage {
         status,
+        start_index,
         has_more,
         entries,
     })
@@ -1184,6 +1581,7 @@ fn decode_read_response(
     let mut reader = Reader::new(&frame.payload);
     let status = FsStatus::from_u8(reader.u8()?)?;
     if status != FsStatus::Ok {
+        reader.expect_empty()?;
         return Ok(FsReadResponse {
             status,
             data: Vec::new(),
@@ -1281,6 +1679,47 @@ fn decode_status_response(
     Ok(response)
 }
 
+fn decode_conditional_mutation_response(
+    data: &[u8],
+    expected_message_id: FsMessageId,
+    expected_request_id: u16,
+    expected_operation_id: u32,
+) -> ControllerFsResult<FsConditionalMutationResponse> {
+    if !matches!(
+        expected_message_id,
+        FsMessageId::ConditionalReplaceResponse | FsMessageId::ConditionalDeleteResponse
+    ) {
+        return Err(ControllerFsError::new(
+            "codec_error",
+            "invalid expected conditional mutation response id",
+        ));
+    }
+    let frame = checked_response_frame(data, expected_message_id, expected_request_id)?;
+    let mut reader = Reader::new(&frame.payload);
+    let status = FsStatus::from_u8(reader.u8()?)?;
+    let outcome = FsConditionalMutationOutcome::from_u8(reader.u8()?)?;
+    let subject = FsConditionalMutationSubject::from_u8(reader.u8()?)?;
+    let operation_id = reader.u32()?;
+    let mut observed_sha256 = [0u8; FS_RPC_SHA256_SIZE];
+    observed_sha256.copy_from_slice(reader.bytes(FS_RPC_SHA256_SIZE)?);
+    reader.expect_empty()?;
+    if operation_id != expected_operation_id {
+        return Err(ControllerFsError::new(
+            "invalid_state",
+            format!(
+                "conditional mutation operation id mismatch: expected {expected_operation_id}, got {operation_id}"
+            ),
+        ));
+    }
+    Ok(FsConditionalMutationResponse {
+        status,
+        outcome,
+        subject,
+        operation_id,
+        observed_sha256,
+    })
+}
+
 fn checked_response_frame(
     data: &[u8],
     expected: FsMessageId,
@@ -1340,6 +1779,80 @@ fn remote_status_error(action: &str, path: &str, status: FsStatus) -> Controller
     )
 }
 
+fn checked_conditional_result(
+    action: &str,
+    path: &str,
+    response: FsConditionalMutationResponse,
+) -> ControllerFsResult<FsConditionalMutationResult> {
+    if response.status == FsStatus::PreconditionFailed {
+        if response.outcome != FsConditionalMutationOutcome::None
+            || response.subject == FsConditionalMutationSubject::None
+        {
+            return Err(ControllerFsError::new(
+                "protocol_error",
+                format!(
+                    "conditional {action} returned an invalid precondition response for {path}"
+                ),
+            ));
+        }
+        return Err(ControllerFsError::new(
+            "precondition_failed",
+            format!(
+                "conditional {action} rejected for {path}: {} SHA-256 changed to {}",
+                response.subject.label(),
+                sha256_hex(&response.observed_sha256)
+            ),
+        ));
+    }
+    if response.status == FsStatus::Unsupported {
+        return Err(ControllerFsError::new(
+            "unsupported_feature",
+            "controller firmware does not support conditional filesystem mutations",
+        ));
+    }
+    // A journaled mutation can have reached its canonical state and still
+    // report a storage/cleanup failure. Preserve that uncertainty explicitly
+    // so callers replay the same operation id and let firmware recovery finish
+    // before reconciling the canonical path.
+    if response.status == FsStatus::StorageError {
+        return Err(ControllerFsError::new(
+            "conditional_storage_error",
+            format!("conditional {action} reported a storage error for {path}"),
+        ));
+    }
+    if response.status == FsStatus::InvalidState {
+        return Err(ControllerFsError::new(
+            "conditional_invalid_state",
+            format!("conditional {action} reported incomplete transaction state for {path}"),
+        ));
+    }
+    if response.status != FsStatus::Ok {
+        return Err(remote_status_error(action, path, response.status));
+    }
+    if response.outcome == FsConditionalMutationOutcome::None
+        || response.subject != FsConditionalMutationSubject::None
+    {
+        return Err(ControllerFsError::new(
+            "protocol_error",
+            format!("conditional {action} returned an invalid success response for {path}"),
+        ));
+    }
+    Ok(FsConditionalMutationResult {
+        outcome: response.outcome,
+        operation_id: response.operation_id,
+    })
+}
+
+fn sha256_hex(digest: &[u8; FS_RPC_SHA256_SIZE]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(FS_RPC_SHA256_SIZE * 2);
+    for byte in digest {
+        out.push(HEX[(byte >> 4) as usize] as char);
+        out.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    out
+}
+
 fn message_name(message_id: FsMessageId) -> &'static str {
     match message_id {
         FsMessageId::StatRequest => "FsStatRequest",
@@ -1365,6 +1878,10 @@ fn message_name(message_id: FsMessageId) -> &'static str {
         FsMessageId::RenameResponse => "FsRenameResponse",
         FsMessageId::CapabilitiesRequest => "FsCapabilitiesRequest",
         FsMessageId::CapabilitiesResponse => "FsCapabilitiesResponse",
+        FsMessageId::ConditionalReplaceRequest => "FsConditionalReplaceRequest",
+        FsMessageId::ConditionalReplaceResponse => "FsConditionalReplaceResponse",
+        FsMessageId::ConditionalDeleteRequest => "FsConditionalDeleteRequest",
+        FsMessageId::ConditionalDeleteResponse => "FsConditionalDeleteResponse",
     }
 }
 
@@ -1458,11 +1975,125 @@ mod tests {
     #[test]
     fn decodes_capabilities_response() {
         let payload = capabilities_response(3);
-        let decoded = decode_capabilities_response(&payload).unwrap();
+        let decoded = decode_capabilities_response(&payload, 3).unwrap();
         assert_eq!(decoded.status, FsStatus::Ok);
         assert_eq!(decoded.rpc_schema, 1);
         assert_eq!(decoded.max_chunk_size, FS_RPC_MAX_CHUNK_SIZE as u16);
         assert_eq!(decoded.max_list_entries, FS_RPC_MAX_LIST_ENTRIES);
+        assert!(decoded.supports_conditional_mutations());
+        decoded.require_conditional_mutations().unwrap();
+
+        let mut legacy = decoded.clone();
+        legacy.feature_flags &= !FS_RPC_FEATURE_CONDITIONAL_MUTATIONS;
+        let error = legacy.require_conditional_mutations().unwrap_err();
+        assert_eq!(error.kind, "unsupported_feature");
+
+        let mut wrong_schema = decoded;
+        wrong_schema.rpc_schema = FS_RPC_SCHEMA + 1;
+        assert!(!wrong_schema.supports_conditional_mutations());
+    }
+
+    #[test]
+    fn capabilities_response_must_match_request_id() {
+        let payload = capabilities_response(3);
+        let error = decode_capabilities_response(&payload, 4).unwrap_err();
+        assert_eq!(error.kind, "invalid_state");
+    }
+
+    #[test]
+    fn frame_rejects_a_message_name_that_disagrees_with_its_id() {
+        let mut payload = status_response(FsMessageId::DeleteResponse, 3);
+        payload[2] ^= 1;
+        let error = decode_frame(&payload).unwrap_err();
+        assert_eq!(error.kind, "codec_error");
+    }
+
+    #[test]
+    fn non_ok_responses_reject_trailing_payload() {
+        let payload = frame(
+            FsMessageId::StatResponse,
+            3,
+            &[FsStatus::NotFound as u8, 0xff],
+        )
+        .unwrap();
+        let error = decode_stat_response(&payload, 3).unwrap_err();
+        assert_eq!(error.kind, "codec_error");
+    }
+
+    #[test]
+    fn list_response_preserves_the_echoed_page_index() {
+        let mut payload = vec![FsStatus::Ok as u8];
+        payload.extend_from_slice(&17u16.to_le_bytes());
+        payload.extend_from_slice(&[0, 0]);
+        let encoded = frame(FsMessageId::ListResponse, 3, &payload).unwrap();
+        let decoded = decode_list_response(&encoded, 3).unwrap();
+        assert_eq!(decoded.start_index, 17);
+    }
+
+    #[test]
+    fn conditional_response_rejects_inconsistent_success_metadata() {
+        let response = FsConditionalMutationResponse {
+            status: FsStatus::Ok,
+            outcome: FsConditionalMutationOutcome::Applied,
+            subject: FsConditionalMutationSubject::Source,
+            operation_id: 7,
+            observed_sha256: [0; FS_RPC_SHA256_SIZE],
+        };
+        let error = checked_conditional_result("delete", "/a.mssp", response).unwrap_err();
+        assert_eq!(error.kind, "protocol_error");
+    }
+
+    #[test]
+    fn conditional_storage_failure_is_exposed_as_retryable_uncertainty() {
+        let response = FsConditionalMutationResponse {
+            status: FsStatus::StorageError,
+            outcome: FsConditionalMutationOutcome::None,
+            subject: FsConditionalMutationSubject::None,
+            operation_id: 7,
+            observed_sha256: [0; FS_RPC_SHA256_SIZE],
+        };
+        let error = checked_conditional_result("replace", "/a.mssp", response).unwrap_err();
+        assert_eq!(error.kind, "conditional_storage_error");
+    }
+
+    #[test]
+    fn encodes_conditional_mutation_wire_formats() {
+        let expected = [0x11; FS_RPC_SHA256_SIZE];
+        let replacement = [0x22; FS_RPC_SHA256_SIZE];
+        let encoded = encode_conditional_replace_request(
+            8,
+            0x1234_5678,
+            "library/step-presets/a.mssp",
+            "tmp/a.stage",
+            &expected,
+            &replacement,
+        )
+        .unwrap();
+        let frame = decode_frame(&encoded).unwrap();
+        assert_eq!(frame.message_id, FsMessageId::ConditionalReplaceRequest);
+        assert_eq!(frame.request_id, 8);
+        let mut reader = Reader::new(&frame.payload);
+        assert_eq!(reader.u32().unwrap(), 0x1234_5678);
+        assert_eq!(reader.bytes(FS_RPC_SHA256_SIZE).unwrap(), expected);
+        assert_eq!(reader.bytes(FS_RPC_SHA256_SIZE).unwrap(), replacement);
+        assert_eq!(reader.string().unwrap(), "library/step-presets/a.mssp");
+        assert_eq!(reader.string().unwrap(), "tmp/a.stage");
+        reader.expect_empty().unwrap();
+
+        let encoded = encode_conditional_delete_request(
+            9,
+            0x8765_4321,
+            "library/step-presets/a.mssp",
+            &expected,
+        )
+        .unwrap();
+        let frame = decode_frame(&encoded).unwrap();
+        assert_eq!(frame.message_id, FsMessageId::ConditionalDeleteRequest);
+        let mut reader = Reader::new(&frame.payload);
+        assert_eq!(reader.u32().unwrap(), 0x8765_4321);
+        assert_eq!(reader.bytes(FS_RPC_SHA256_SIZE).unwrap(), expected);
+        assert_eq!(reader.string().unwrap(), "library/step-presets/a.mssp");
+        reader.expect_empty().unwrap();
     }
 
     #[test]
@@ -1521,6 +2152,71 @@ mod tests {
     }
 
     #[test]
+    fn binary_timeout_drops_stream_before_retry() {
+        run_async(async {
+            let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let server = tokio::spawn(async move {
+                let (mut first_stream, _) = listener.accept().await.unwrap();
+                let first = read_binary_request(&mut first_stream).await;
+                // Keep the first connection open without replying. The client
+                // must discard it on timeout and establish a fresh connection.
+                let (mut second_stream, _) = listener.accept().await.unwrap();
+                let second = read_binary_request(&mut second_stream).await;
+                write_binary_response(&mut second_stream, second.token, &[0xab]).await;
+                (first.token, second.token)
+            });
+
+            let mut client = BridgeBinaryClient::new(port).with_timeout(Duration::from_millis(5));
+            let first_error = client
+                .controller_rpc(vec![0x01], FsMessageId::StatResponse, 1)
+                .await
+                .unwrap_err();
+            assert_eq!(first_error.kind, "bridge_timeout");
+
+            let response = client
+                .controller_rpc(vec![0x02], FsMessageId::StatResponse, 50)
+                .await
+                .unwrap();
+            assert_eq!(response, vec![0xab]);
+            let (first_token, second_token) = server.await.unwrap();
+            assert_ne!(first_token, second_token);
+        });
+    }
+
+    #[test]
+    fn binary_response_lengths_are_bounded_before_allocation() {
+        run_async(async {
+            let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let server = tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let request = read_binary_request(&mut stream).await;
+                let mut response = Vec::new();
+                response.extend_from_slice(BINARY_RESPONSE_MAGIC);
+                response.push(BINARY_CONTROL_VERSION);
+                response.push(BINARY_STATUS_OK);
+                response.extend_from_slice(&request.token.to_le_bytes());
+                response.extend_from_slice(
+                    &((BINARY_MAX_RESPONSE_PAYLOAD_BYTES + 1) as u32).to_le_bytes(),
+                );
+                response.extend_from_slice(&0u16.to_le_bytes());
+                response.extend_from_slice(&0u16.to_le_bytes());
+                stream.write_all(&response).await.unwrap();
+            });
+
+            let mut client = BridgeBinaryClient::new(port);
+            let error = client
+                .controller_rpc(vec![0x01], FsMessageId::StatResponse, 50)
+                .await
+                .unwrap_err();
+            assert_eq!(error.kind, "bridge_unavailable");
+            assert!(error.message.contains("too large"));
+            server.await.unwrap();
+        });
+    }
+
+    #[test]
     fn client_reads_file_with_pipeline() {
         run_async(async {
             let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
@@ -1569,6 +2265,41 @@ mod tests {
     }
 
     #[test]
+    fn client_rejects_oversized_pull_before_creating_destination() {
+        run_async(async {
+            let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let server = tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let stat = read_binary_request(&mut stream).await;
+                write_binary_response(
+                    &mut stream,
+                    stat.token,
+                    &stat_response(1, FsFileType::File, 11),
+                )
+                .await;
+            });
+
+            let bridge = BridgeBinaryClient::new(port);
+            let mut client = ControllerFsClient::new(bridge);
+            let destination = temp_test_path("controller-fs-pull-limit.bin");
+            let _ = std::fs::remove_file(&destination);
+            let error = client
+                .pull_file_to_path_with_progress_limit(
+                    "projects/a.bin",
+                    &destination,
+                    10,
+                    |_, _| {},
+                )
+                .await
+                .unwrap_err();
+            assert_eq!(error.kind, "too_large");
+            assert!(!destination.exists());
+            server.await.unwrap();
+        });
+    }
+
+    #[test]
     fn client_writes_file_with_pipeline() {
         run_async(async {
             let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
@@ -1576,10 +2307,11 @@ mod tests {
             let server = tokio::spawn(async move {
                 let (mut stream, _) = listener.accept().await.unwrap();
                 let begin = read_binary_request(&mut stream).await;
+                let session_id = write_begin_session_id(&begin.payload);
                 write_binary_response(
                     &mut stream,
                     begin.token,
-                    &write_response(FsMessageId::WriteBeginResponse, 2, 1, 0),
+                    &write_response(FsMessageId::WriteBeginResponse, 2, session_id, 0),
                 )
                 .await;
                 let first = read_binary_request(&mut stream).await;
@@ -1588,26 +2320,26 @@ mod tests {
                 write_binary_response(
                     &mut stream,
                     first.token,
-                    &write_response(FsMessageId::WriteChunkResponse, 3, 1, 4),
+                    &write_response(FsMessageId::WriteChunkResponse, 3, session_id, 4),
                 )
                 .await;
                 write_binary_response(
                     &mut stream,
                     second.token,
-                    &write_response(FsMessageId::WriteChunkResponse, 4, 1, 4),
+                    &write_response(FsMessageId::WriteChunkResponse, 4, session_id, 4),
                 )
                 .await;
                 write_binary_response(
                     &mut stream,
                     third.token,
-                    &write_response(FsMessageId::WriteChunkResponse, 5, 1, 1),
+                    &write_response(FsMessageId::WriteChunkResponse, 5, session_id, 1),
                 )
                 .await;
                 let commit = read_binary_request(&mut stream).await;
                 write_binary_response(
                     &mut stream,
                     commit.token,
-                    &write_response(FsMessageId::WriteCommitResponse, 6, 1, 0),
+                    &write_response(FsMessageId::WriteCommitResponse, 6, session_id, 0),
                 )
                 .await;
                 (first.payload, second.payload, third.payload, commit.payload)
@@ -1646,17 +2378,18 @@ mod tests {
             let server = tokio::spawn(async move {
                 let (mut stream, _) = listener.accept().await.unwrap();
                 let begin = read_binary_request(&mut stream).await;
+                let session_id = write_begin_session_id(&begin.payload);
                 write_binary_response(
                     &mut stream,
                     begin.token,
-                    &write_response(FsMessageId::WriteBeginResponse, 2, 1, 0),
+                    &write_response(FsMessageId::WriteBeginResponse, 2, session_id, 0),
                 )
                 .await;
                 let commit = read_binary_request(&mut stream).await;
                 write_binary_response(
                     &mut stream,
                     commit.token,
-                    &write_response(FsMessageId::WriteCommitResponse, 3, 1, 0),
+                    &write_response(FsMessageId::WriteCommitResponse, 3, session_id, 0),
                 )
                 .await;
                 (begin.payload, commit.payload)
@@ -1685,6 +2418,115 @@ mod tests {
                 decode_frame(&commit).unwrap().message_id,
                 FsMessageId::WriteCommitRequest
             );
+        });
+    }
+
+    #[test]
+    fn client_conditional_replace_uses_one_post_negotiation_rpc_and_checks_echoes() {
+        run_async(async {
+            let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let server = tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let capabilities = read_binary_request(&mut stream).await;
+                write_binary_response(&mut stream, capabilities.token, &capabilities_response(1))
+                    .await;
+                let request = read_binary_request(&mut stream).await;
+                write_binary_response(
+                    &mut stream,
+                    request.token,
+                    &conditional_response(
+                        FsMessageId::ConditionalReplaceResponse,
+                        2,
+                        FsStatus::Ok,
+                        FsConditionalMutationOutcome::Applied,
+                        FsConditionalMutationSubject::None,
+                        0x1234_5678,
+                        &[0; FS_RPC_SHA256_SIZE],
+                    ),
+                )
+                .await;
+                request.payload
+            });
+
+            let expected = [0x11; FS_RPC_SHA256_SIZE];
+            let replacement = [0x22; FS_RPC_SHA256_SIZE];
+            let bridge = BridgeBinaryClient::new(port);
+            let mut client = ControllerFsClient::new(bridge);
+            client.capabilities().await.unwrap();
+            let result = client
+                .conditional_replace(
+                    0x1234_5678,
+                    "library/step-presets/a.mssp",
+                    "tmp/a.stage",
+                    &expected,
+                    &replacement,
+                )
+                .await
+                .unwrap();
+            assert_eq!(result.outcome, FsConditionalMutationOutcome::Applied);
+            assert_eq!(result.operation_id, 0x1234_5678);
+
+            let payload = server.await.unwrap();
+            let frame = decode_frame(&payload).unwrap();
+            assert_eq!(frame.message_id, FsMessageId::ConditionalReplaceRequest);
+            assert_eq!(frame.request_id, 2);
+        });
+    }
+
+    #[test]
+    fn client_conditional_delete_surfaces_precondition_digest() {
+        run_async(async {
+            let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let observed = [0xab; FS_RPC_SHA256_SIZE];
+            let server = tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let capabilities = read_binary_request(&mut stream).await;
+                write_binary_response(&mut stream, capabilities.token, &capabilities_response(1))
+                    .await;
+                let request = read_binary_request(&mut stream).await;
+                write_binary_response(
+                    &mut stream,
+                    request.token,
+                    &conditional_response(
+                        FsMessageId::ConditionalDeleteResponse,
+                        2,
+                        FsStatus::PreconditionFailed,
+                        FsConditionalMutationOutcome::None,
+                        FsConditionalMutationSubject::Source,
+                        42,
+                        &observed,
+                    ),
+                )
+                .await;
+            });
+
+            let expected = [0x11; FS_RPC_SHA256_SIZE];
+            let bridge = BridgeBinaryClient::new(port);
+            let mut client = ControllerFsClient::new(bridge);
+            client.capabilities().await.unwrap();
+            let error = client
+                .conditional_delete(42, "library/step-presets/a.mssp", &expected)
+                .await
+                .unwrap_err();
+            assert_eq!(error.kind, "precondition_failed");
+            assert!(error.message.contains(&"ab".repeat(FS_RPC_SHA256_SIZE)));
+            server.await.unwrap();
+        });
+    }
+
+    #[test]
+    fn client_refuses_conditional_mutation_without_capability_negotiation() {
+        run_async(async {
+            let expected = [0x11; FS_RPC_SHA256_SIZE];
+            let bridge = BridgeBinaryClient::new(1);
+            let mut client = ControllerFsClient::new(bridge);
+            let error = client
+                .conditional_delete(1, "library/step-presets/a.mssp", &expected)
+                .await
+                .unwrap_err();
+            assert_eq!(error.kind, "capability_required");
         });
     }
 
@@ -1738,8 +2580,23 @@ mod tests {
         payload.extend_from_slice(&32_512u16.to_le_bytes());
         payload.push(FS_RPC_MAX_LIST_ENTRIES);
         payload.extend_from_slice(&192u16.to_le_bytes());
-        payload.extend_from_slice(&7u32.to_le_bytes());
+        payload.extend_from_slice(&(7u32 | FS_RPC_FEATURE_CONDITIONAL_MUTATIONS).to_le_bytes());
         frame(FsMessageId::CapabilitiesResponse, request_id, &payload).unwrap()
+    }
+
+    fn conditional_response(
+        message_id: FsMessageId,
+        request_id: u16,
+        status: FsStatus,
+        outcome: FsConditionalMutationOutcome,
+        subject: FsConditionalMutationSubject,
+        operation_id: u32,
+        observed_sha256: &[u8; FS_RPC_SHA256_SIZE],
+    ) -> Vec<u8> {
+        let mut payload = vec![status as u8, outcome as u8, subject as u8];
+        payload.extend_from_slice(&operation_id.to_le_bytes());
+        payload.extend_from_slice(observed_sha256);
+        frame(message_id, request_id, &payload).unwrap()
     }
 
     fn stat_response(request_id: u16, file_type: FsFileType, size: u32) -> Vec<u8> {
@@ -1780,5 +2637,12 @@ mod tests {
         let offset = reader.u32().unwrap();
         let size = reader.u16().unwrap();
         (offset, size)
+    }
+
+    fn write_begin_session_id(payload: &[u8]) -> u16 {
+        let frame = decode_frame(payload).unwrap();
+        assert_eq!(frame.message_id, FsMessageId::WriteBeginRequest);
+        let mut reader = Reader::new(&frame.payload);
+        reader.u16().unwrap()
     }
 }

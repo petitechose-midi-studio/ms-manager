@@ -69,7 +69,13 @@ pub fn run() {
             commands::settings::tab_order_set,
             commands::status::status_get,
             commands::step_preset::step_preset_inspect,
+            commands::step_preset::step_preset_rename,
+            commands::step_preset::step_preset_delete,
             commands::step_preset::step_preset_validate,
+            commands::step_preset::remote_step_preset_inspect,
+            commands::step_preset::remote_step_preset_validate,
+            commands::step_preset::remote_step_preset_rename,
+            commands::step_preset::remote_step_preset_delete,
             commands::ux_recorder::ux_recordings_open,
             commands::ux_recorder::ux_recording_session_rotate,
         ])

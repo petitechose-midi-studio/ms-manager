@@ -323,10 +323,10 @@ export type ControllerFsCapabilities = {
   status: string;
   rpc_schema: number;
   max_chunk_size: number;
-  max_file_size_bytes: number;
+  response_buffer_size: number;
   max_list_entries: number;
-  max_path_bytes: number;
-  flags: number;
+  max_path_length: number;
+  feature_flags: number;
 };
 
 export type ControllerFsListEntry = {
@@ -430,23 +430,86 @@ export type StepPresetFlags = {
   rootValues: boolean;
   graphPayload: boolean;
   overwrite: boolean;
+  mixedPitchPolicy: boolean;
+};
+
+export type StepPresetCompatibility =
+  | "ready"
+  | "ready_mixed"
+  | "warning_legacy_defaulted"
+  | "unsupported_version"
+  | "blocked_invalid"
+  | "unknown";
+
+export type StepPresetScalePolicy =
+  | "chromatic"
+  | "scale_relative"
+  | "mixed"
+  | "unknown";
+
+export type StepPresetSourceScale = {
+  root: number;
+  type: number;
+  mode: number;
 };
 
 export type StepPresetReport = {
   operation: string;
   fileKind: string;
   status: StepPresetStatus;
+  compatibility: StepPresetCompatibility;
+  formatVersion: number;
+  technicalId: string;
+  semanticName: string;
+  metadataDefaulted: boolean;
+  mixedPitchPolicy: boolean;
+  scalePolicy: StepPresetScalePolicy;
+  defaultScalePolicy: StepPresetScalePolicy;
+  sourceScale: StepPresetSourceScale;
   rootContext: boolean;
   rootValues: boolean;
   stepNodeCount: number;
   sequenceCount: number;
   cycleSetCount: number;
+  bytesWritten: number;
   flags: StepPresetFlags;
+  previewKey: string;
 };
 
 export type StepPresetInspectRequest = {
   local_path: string;
-  tool_path?: string | null;
+};
+
+export type StepPresetRenameRequest = StepPresetInspectRequest & {
+  semantic_name: string;
+  expected_technical_id: string;
+  expected_semantic_name: string;
+  expected_preview_key: string;
+};
+
+export type StepPresetIdentityRequest = StepPresetInspectRequest & {
+  expected_technical_id: string;
+  expected_semantic_name: string;
+  expected_preview_key: string;
+};
+
+export type RemoteStepPresetInspectRequest = {
+  instance_id: string;
+  control_port: number;
+  remote_path: string;
+};
+
+export type RemoteStepPresetRenameRequest = RemoteStepPresetInspectRequest & {
+  semantic_name: string;
+  expected_technical_id: string;
+  expected_semantic_name: string;
+  expected_preview_key: string;
+};
+
+export type RemoteStepPresetIdentityRequest = RemoteStepPresetInspectRequest & {
+  expected_technical_id: string;
+  expected_semantic_name: string;
+  expected_preview_key: string;
 };
 
 export type LocalFsChangedEvent = {

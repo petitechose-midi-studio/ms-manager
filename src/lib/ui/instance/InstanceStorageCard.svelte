@@ -15,7 +15,13 @@
     localFsMkdir,
     localFsRename,
     pathOpen,
+    remoteStepPresetDelete,
+    remoteStepPresetInspect,
+    remoteStepPresetRename,
+    remoteStepPresetValidate,
+    stepPresetDelete,
     stepPresetInspect,
+    stepPresetRename,
     stepPresetValidate,
   } from "$lib/api/client";
   import type {
@@ -41,6 +47,7 @@
   import TrashIcon from "$lib/ui/icons/TrashIcon.svelte";
   import UploadIcon from "$lib/ui/icons/UploadIcon.svelte";
   import StepPresetStorageSummary from "$lib/ui/instance/StepPresetStorageSummary.svelte";
+  import StepPresetActionDialog from "$lib/ui/instance/StepPresetActionDialog.svelte";
 
   export let instance: BridgeInstanceStatus;
   export let disabled = false;
@@ -82,6 +89,12 @@
   };
 
   type StepPresetCheckAction = "inspect" | "validate";
+  type StepPresetDialogState = {
+    action: "rename" | "delete";
+    item: StorageItem;
+    report: StepPresetReport;
+    remoteEndpoint: { instance_id: string; control_port: number } | null;
+  };
 
   let localPath = "";
   let localRootPath = "";
@@ -92,10 +105,12 @@
 
   let remotePath = DEFAULT_REMOTE_ROOT;
   let loadedInstanceId: string | null = null;
+  let loadedControlPort: number | null = null;
   let remoteEntries: ControllerFsListEntry[] = [];
   let capabilities: ControllerFsCapabilities | null = null;
   let remoteLoading = false;
   let remoteError: string | null = null;
+  let remoteRequestSequence = 0;
 
   let draggedItem: DraggedItem | null = null;
   let transferBusy = false;
@@ -117,12 +132,18 @@
   let selectedRemotePreset: StorageItem | null = null;
   let activeLocalPreset: StorageItem | null = null;
   let activeRemotePreset: StorageItem | null = null;
-  let presetReportPath: string | null = null;
+  let activeStepPreset: StorageItem | null = null;
+  let presetReportKey: string | null = null;
   let presetReport: StepPresetReport | null = null;
   let presetError: string | null = null;
   let presetLoading = false;
   let presetLoadingPath: string | null = null;
   let presetAction: StepPresetCheckAction | null = null;
+  let presetDialog: StepPresetDialogState | null = null;
+  let presetDialogValue = "";
+  let presetDialogBusy = false;
+  let presetDialogError: string | null = null;
+  let presetDialogGeneration = 0;
 
   $: sortedRemoteEntries = [...remoteEntries].sort((a, b) => {
     if (a.file_type === "directory" && b.file_type !== "directory") return -1;
@@ -140,19 +161,31 @@
   $: selectedRemotePreset = singleRemoteStepPreset();
   $: activeLocalPreset = activeSelectionSide === "local" ? selectedLocalPreset : null;
   $: activeRemotePreset = activeSelectionSide === "remote" ? selectedRemotePreset : null;
-  $: if (activeLocalPreset?.path) {
-    if (activeLocalPreset.path !== presetReportPath && !presetLoading) {
-      void inspectStepPreset(activeLocalPreset.path, "inspect");
+  $: activeStepPreset = activeLocalPreset ?? activeRemotePreset;
+  $: if (activeStepPreset?.path) {
+    if (stepPresetKey(activeStepPreset) !== presetReportKey && !presetLoading) {
+      void inspectStepPreset(activeStepPreset, "inspect");
     }
-  } else if (presetReportPath) {
-    presetReportPath = null;
+  } else if (presetReportKey) {
+    presetReportKey = null;
     presetReport = null;
     presetError = null;
     presetAction = null;
   }
 
-  $: if (instance.instance_id !== loadedInstanceId) {
+  $: if (instance.instance_id !== loadedInstanceId || instance.control_port !== loadedControlPort) {
+    invalidateRemoteRequests();
+    remoteLoading = false;
+    invalidatePresetDialogContext();
+    if (presetDialog?.item.side === "remote" && !presetDialogBusy) {
+      presetDialog = null;
+      presetDialogError = null;
+    }
+    presetReportKey = null;
+    presetReport = null;
+    presetError = null;
     loadedInstanceId = instance.instance_id;
+    loadedControlPort = instance.control_port;
     remotePath = DEFAULT_REMOTE_ROOT;
     remoteEntries = [];
     capabilities = null;
@@ -164,6 +197,7 @@
 
   onMount(() => {
     loadedInstanceId = instance.instance_id;
+    loadedControlPort = instance.control_port;
     void loadLocal(null);
     void loadRemote(remotePath, true);
 
@@ -195,6 +229,18 @@
       instance_id: instance.instance_id,
       control_port: instance.control_port,
     };
+  }
+
+  function endpointIsCurrent(endpoint: { instance_id: string; control_port: number }): boolean {
+    return endpoint.instance_id === instance.instance_id && endpoint.control_port === instance.control_port;
+  }
+
+  function invalidateRemoteRequests(): void {
+    remoteRequestSequence += 1;
+  }
+
+  function invalidatePresetDialogContext(): void {
+    presetDialogGeneration += 1;
   }
 
   async function openLocalRoot() {
@@ -229,24 +275,33 @@
   }
 
   async function loadRemote(path: string, loadCapabilities = false) {
-    if (remoteLoading || disabled) return;
+    if (disabled) return;
+    const endpoint = requestBase();
+    const requestSequence = ++remoteRequestSequence;
     remoteLoading = true;
     remoteError = null;
     try {
-      if (loadCapabilities && !capabilities) {
-        capabilities = await controllerFsCapabilitiesGet(requestBase());
+      let nextCapabilities = capabilities;
+      if (loadCapabilities && !nextCapabilities) {
+        nextCapabilities = await controllerFsCapabilitiesGet(endpoint);
+        if (requestSequence !== remoteRequestSequence || !endpointIsCurrent(endpoint)) return;
       }
-      remoteEntries = await controllerFsList({ ...requestBase(), path });
+      const entries = await controllerFsList({ ...endpoint, path });
+      if (requestSequence !== remoteRequestSequence || !endpointIsCurrent(endpoint)) return;
+      capabilities = nextCapabilities;
+      remoteEntries = entries;
       remotePath = normalizeRemotePath(path);
       remoteSelectedPaths = new Set();
       remoteAnchorPath = null;
       if (activeSelectionSide === "remote") activeSelectionSide = null;
       contextMenu = null;
     } catch (e) {
-      remoteError = messageOf(e);
-      remoteEntries = [];
+      if (requestSequence === remoteRequestSequence && endpointIsCurrent(endpoint)) {
+        remoteError = messageOf(e);
+        remoteEntries = [];
+      }
     } finally {
-      remoteLoading = false;
+      if (requestSequence === remoteRequestSequence) remoteLoading = false;
     }
   }
 
@@ -271,16 +326,27 @@
 
   async function refreshRemoteEntries() {
     if (remoteLoading || disabled) return;
+    const endpoint = requestBase();
+    const path = remotePath;
+    const requestSequence = ++remoteRequestSequence;
     try {
-      remoteEntries = await controllerFsList({ ...requestBase(), path: remotePath });
+      const entries = await controllerFsList({ ...endpoint, path });
+      if (
+        requestSequence !== remoteRequestSequence ||
+        !endpointIsCurrent(endpoint) ||
+        path !== remotePath
+      ) return;
+      remoteEntries = entries;
       remoteSelectedPaths = pruneSelection(
         remoteSelectedPaths,
-        remoteEntries.map((entry) => normalizeRemotePath(`${remotePath}/${entry.name}`)),
+        entries.map((entry) => normalizeRemotePath(`${path}/${entry.name}`)),
       );
       if (remoteAnchorPath && !remoteSelectedPaths.has(remoteAnchorPath)) remoteAnchorPath = null;
       remoteError = null;
     } catch (e) {
-      remoteError = messageOf(e);
+      if (requestSequence === remoteRequestSequence && endpointIsCurrent(endpoint)) {
+        remoteError = messageOf(e);
+      }
     }
   }
 
@@ -350,6 +416,10 @@
     return !!item && item.fileType === "file" && item.name.toLowerCase().endsWith(STEP_PRESET_EXTENSION);
   }
 
+  function stepPresetKey(item: StorageItem): string {
+    return `${item.side}:${item.path}`;
+  }
+
   function visibleLocalPaths(): string[] {
     return localEntries.map((entry) => entry.path);
   }
@@ -359,6 +429,7 @@
   }
 
   function selectItem(item: StorageItem, event: MouseEvent | null = null) {
+    invalidatePresetDialogContext();
     const side = item.side;
     const path = item.path;
     const selected = side === "local" ? localSelectedPaths : remoteSelectedPaths;
@@ -900,30 +971,44 @@
     }
   }
 
-  async function inspectStepPreset(path: string, action: StepPresetCheckAction) {
-    if (!path || presetLoading) return;
-    presetReportPath = path;
+  async function inspectStepPreset(
+    item: StorageItem,
+    action: StepPresetCheckAction,
+    remoteEndpoint = item.side === "remote" ? requestBase() : null,
+  ): Promise<StepPresetReport | null> {
+    if (!item.path || presetLoading || !isStepPresetItem(item)) return null;
+    const key = stepPresetKey(item);
+    presetReportKey = key;
     presetReport = null;
     presetError = null;
     presetAction = action;
     presetLoading = true;
-    presetLoadingPath = path;
+    presetLoadingPath = key;
     try {
-      const report =
-        action === "validate"
-          ? await stepPresetValidate({ local_path: path })
-          : await stepPresetInspect({ local_path: path });
-      if (presetReportPath === path) {
+      const report = item.side === "local"
+        ? action === "validate"
+          ? await stepPresetValidate({ local_path: item.path })
+          : await stepPresetInspect({ local_path: item.path })
+        : action === "validate"
+          ? await remoteStepPresetValidate({ ...remoteEndpoint!, remote_path: item.path })
+          : await remoteStepPresetInspect({ ...remoteEndpoint!, remote_path: item.path });
+      const endpointStillCurrent = item.side === "local" || (
+        remoteEndpoint?.instance_id === instance.instance_id &&
+        remoteEndpoint?.control_port === instance.control_port
+      );
+      if (presetReportKey === key && endpointStillCurrent) {
         presetReport = report;
         presetError = null;
       }
+      return endpointStillCurrent ? report : null;
     } catch (e) {
-      if (presetReportPath === path) {
+      if (presetReportKey === key) {
         presetReport = null;
         presetError = messageOf(e);
       }
+      return null;
     } finally {
-      if (presetLoadingPath === path) {
+      if (presetLoadingPath === key) {
         presetLoading = false;
         presetLoadingPath = null;
       }
@@ -932,9 +1017,202 @@
 
   async function inspectSelectedStepPreset(action: StepPresetCheckAction) {
     closeContextMenu();
-    const preset = singleLocalStepPreset();
+    const preset = activeSelectionSide === "remote"
+      ? singleRemoteStepPreset()
+      : singleLocalStepPreset();
     if (!preset) return;
-    await inspectStepPreset(preset.path, action);
+    await inspectStepPreset(preset, action);
+  }
+
+  function stepPresetReportCanMutate(report: StepPresetReport | null): report is StepPresetReport {
+    if (!report || !report.flags || !report.sourceScale) return false;
+    const compatibilityConsistent =
+      (report.compatibility === "ready" && !report.mixedPitchPolicy) ||
+      (report.compatibility === "ready_mixed" && report.mixedPitchPolicy);
+    const pitchPolicyValid =
+      (report.scalePolicy === "chromatic" || report.scalePolicy === "scale_relative" || report.scalePolicy === "mixed") &&
+      (report.defaultScalePolicy === "chromatic" || report.defaultScalePolicy === "scale_relative") &&
+      (report.scalePolicy === "mixed") === report.mixedPitchPolicy &&
+      Number.isInteger(report.sourceScale.root) && report.sourceScale.root >= 0 && report.sourceScale.root < 12 &&
+      Number.isInteger(report.sourceScale.type) && report.sourceScale.type >= 0 && report.sourceScale.type <= 13 &&
+      Number.isInteger(report.sourceScale.mode) && report.sourceScale.mode >= 0 && report.sourceScale.mode <= 3;
+    const flagsConsistent = report.flags.graphPayload &&
+      report.flags.rootValues === report.rootValues &&
+      report.flags.mixedPitchPolicy === report.mixedPitchPolicy &&
+      (!report.rootValues || report.rootContext);
+    return report.status === "ok" && compatibilityConsistent && pitchPolicyValid && flagsConsistent &&
+      report.fileKind === "step_graph_preset" && report.formatVersion === 2 &&
+      !report.metadataDefaulted && validStepPresetTechnicalId(report.technicalId) &&
+      validStepPresetSemanticName(report.semanticName) && /^[0-9a-f]{64}$/.test(report.previewKey);
+  }
+
+  function validStepPresetTechnicalId(value: string): boolean {
+    if (!value || value.length > 54 || !/^[A-Za-z0-9. -]+$/.test(value) ||
+      value.startsWith(".") || value.startsWith(" ") || value.endsWith(".") ||
+      value.endsWith(" ") || value.includes("..")) return false;
+    const base = value.split(".", 1)[0].toLowerCase();
+    return !/^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/.test(base);
+  }
+
+  function validStepPresetSemanticName(value: string): boolean {
+    if (!value || value.startsWith(" ") || value.endsWith(" ") ||
+      new TextEncoder().encode(value).length > 31) return false;
+    for (const character of value) {
+      const code = character.codePointAt(0) ?? 0;
+      if (code < 32 || (code >= 127 && code <= 159)) return false;
+    }
+    return true;
+  }
+
+  function stepPresetDialogContextIsCurrent(
+    dialog: StepPresetDialogState,
+    generation: number,
+  ): boolean {
+    if (presetDialog !== dialog || presetDialogGeneration !== generation) return false;
+    return dialog.item.side === "local" || (!!dialog.remoteEndpoint && endpointIsCurrent(dialog.remoteEndpoint));
+  }
+
+  async function openStepPresetDialog(
+    action: "rename" | "delete",
+    item: StorageItem,
+  ) {
+    closeContextMenu();
+    if (transferBusy || (disabled && item.side === "remote") || !isStepPresetItem(item)) return;
+    const expectedKey = stepPresetKey(item);
+    const expectedSelectionGeneration = presetDialogGeneration;
+    const remoteEndpoint = item.side === "remote" ? requestBase() : null;
+    const report = presetReportKey === stepPresetKey(item) && stepPresetReportCanMutate(presetReport)
+      ? presetReport
+      : await inspectStepPreset(item, "inspect", remoteEndpoint);
+    const selected = activeStepPreset;
+    const selectionStillCurrent = !!selected && stepPresetKey(selected) === expectedKey;
+    const endpointStillCurrent = item.side === "local" || (
+      remoteEndpoint?.instance_id === instance.instance_id &&
+      remoteEndpoint?.control_port === instance.control_port
+    );
+    if (expectedSelectionGeneration !== presetDialogGeneration || !selectionStillCurrent || !endpointStillCurrent) {
+      return;
+    }
+    if (!stepPresetReportCanMutate(report)) {
+      transferError = presetError ??
+        "This Step Preset has no safe semantic identity. Validate or migrate it before modifying it.";
+      return;
+    }
+    presetDialog = {
+      action,
+      item,
+      report,
+      remoteEndpoint,
+    };
+    presetDialogValue = report.semanticName;
+    presetDialogBusy = false;
+    presetDialogError = null;
+  }
+
+  function closeStepPresetDialog() {
+    if (presetDialogBusy) return;
+    presetDialog = null;
+    presetDialogError = null;
+  }
+
+  async function confirmStepPresetDialog() {
+    const dialog = presetDialog;
+    if (!dialog || presetDialogBusy || transferBusy) return;
+    const expectedDialogGeneration = presetDialogGeneration;
+    presetDialogBusy = true;
+    presetDialogError = null;
+    transferBusy = true;
+    transferError = null;
+    transferProgress = null;
+    try {
+      if (dialog.action === "rename") {
+        const report = dialog.item.side === "local"
+          ? await stepPresetRename({
+              local_path: dialog.item.path,
+              semantic_name: presetDialogValue,
+              expected_technical_id: dialog.report.technicalId,
+              expected_semantic_name: dialog.report.semanticName,
+              expected_preview_key: dialog.report.previewKey,
+            })
+          : await remoteStepPresetRename({
+              ...(dialog.remoteEndpoint ?? requestBase()),
+              remote_path: dialog.item.path,
+              semantic_name: presetDialogValue,
+              expected_technical_id: dialog.report.technicalId,
+              expected_semantic_name: dialog.report.semanticName,
+              expected_preview_key: dialog.report.previewKey,
+            });
+        if (!stepPresetDialogContextIsCurrent(dialog, expectedDialogGeneration)) {
+          transferMessage = `Renamed ${dialog.report.semanticName} on the previous storage selection.`;
+          presetDialog = null;
+          presetDialogError = null;
+          return;
+        }
+        transferMessage = `Renamed Step Preset to ${report.semanticName} (${report.technicalId})`;
+        presetReportKey = stepPresetKey(dialog.item);
+        presetReport = report;
+        presetError = null;
+        presetDialog = null;
+        if (dialog.item.side === "local") {
+          await refreshLocalEntries();
+        } else {
+          await refreshRemoteEntries();
+        }
+      } else {
+        if (dialog.item.side === "local") {
+          await stepPresetDelete({
+            local_path: dialog.item.path,
+            expected_technical_id: dialog.report.technicalId,
+            expected_semantic_name: dialog.report.semanticName,
+            expected_preview_key: dialog.report.previewKey,
+          });
+        } else {
+          await remoteStepPresetDelete({
+            ...(dialog.remoteEndpoint ?? requestBase()),
+            remote_path: dialog.item.path,
+            expected_technical_id: dialog.report.technicalId,
+            expected_semantic_name: dialog.report.semanticName,
+            expected_preview_key: dialog.report.previewKey,
+          });
+        }
+        if (!stepPresetDialogContextIsCurrent(dialog, expectedDialogGeneration)) {
+          transferMessage = `Deleted ${dialog.report.semanticName} from the previous storage selection.`;
+          presetDialog = null;
+          presetDialogError = null;
+          return;
+        }
+        transferMessage = `Deleted ${dialog.report.semanticName} (${dialog.report.technicalId})`;
+        if (dialog.item.side === "local") {
+          localSelectedPaths.delete(dialog.item.path);
+          localSelectedPaths = new Set(localSelectedPaths);
+        } else {
+          remoteSelectedPaths.delete(dialog.item.path);
+          remoteSelectedPaths = new Set(remoteSelectedPaths);
+        }
+        presetReportKey = null;
+        presetReport = null;
+        presetError = null;
+        presetDialog = null;
+        if (dialog.item.side === "local") {
+          await refreshLocalEntries();
+        } else {
+          await refreshRemoteEntries();
+        }
+      }
+    } catch (e) {
+      const message = messageOf(e);
+      if (stepPresetDialogContextIsCurrent(dialog, expectedDialogGeneration)) {
+        presetDialogError = message;
+        transferError = message;
+      } else {
+        presetDialog = null;
+        presetDialogError = null;
+        transferError = `Step Preset operation on the previous storage selection failed: ${message}`;
+      }
+    } finally {
+      transferBusy = false;
+      presetDialogBusy = false;
+    }
   }
 
   async function createLocalFolder() {
@@ -958,6 +1236,10 @@
   async function renameRemoteItem(item: StorageItem | null) {
     closeContextMenu();
     if (!item || item.side !== "remote" || transferBusy || disabled) return;
+    if (isStepPresetItem(item)) {
+      await openStepPresetDialog("rename", item);
+      return;
+    }
     const nextName = safeChildName(window.prompt("Rename", item.name));
     if (!nextName || nextName === item.name) return;
 
@@ -979,6 +1261,10 @@
   async function renameLocalItem(item: StorageItem | null) {
     closeContextMenu();
     if (!item || item.side !== "local" || transferBusy) return;
+    if (isStepPresetItem(item)) {
+      await openStepPresetDialog("rename", item);
+      return;
+    }
     const nextName = safeChildName(window.prompt("Rename", item.name));
     if (!nextName || nextName === item.name) return;
 
@@ -1003,6 +1289,15 @@
     closeContextMenu();
     const items = remoteSelection();
     if (!items.length || transferBusy || disabled) return;
+    const stepPresets = items.filter(isStepPresetItem);
+    if (stepPresets.length > 0) {
+      if (items.length === 1) {
+        await openStepPresetDialog("delete", stepPresets[0]);
+      } else {
+        transferError = "Delete Step Presets one at a time so each semantic name and technical ID can be confirmed.";
+      }
+      return;
+    }
     const label = items.length === 1 ? items[0].name : `${items.length} items`;
     if (!window.confirm(`Delete ${label} from controller storage?`)) return;
 
@@ -1033,6 +1328,15 @@
     closeContextMenu();
     const items = localSelection();
     if (!items.length || transferBusy) return;
+    const stepPresets = items.filter(isStepPresetItem);
+    if (stepPresets.length > 0) {
+      if (items.length === 1) {
+        await openStepPresetDialog("delete", stepPresets[0]);
+      } else {
+        transferError = "Delete Step Presets one at a time so each semantic name and technical ID can be confirmed.";
+      }
+      return;
+    }
     const label = items.length === 1 ? items[0].name : `${items.length} items`;
     if (!window.confirm(`Delete ${label} from PC storage?`)) return;
 
@@ -1376,20 +1680,30 @@
     </section>
   </div>
 
-  {#if activeLocalPreset}
+  {#if activeStepPreset}
     <StepPresetStorageSummary
-      side="local"
-      name={activeLocalPreset.name}
+      side={activeStepPreset.side}
+      name={activeStepPreset.name}
       loading={presetLoading}
       action={presetAction}
       report={presetReport}
       error={presetError}
-      onInspect={() => inspectStepPreset(activeLocalPreset?.path ?? "", "inspect")}
-      onValidate={() => inspectStepPreset(activeLocalPreset?.path ?? "", "validate")}
+      onInspect={() => activeStepPreset && inspectStepPreset(activeStepPreset, "inspect")}
+      onValidate={() => activeStepPreset && inspectStepPreset(activeStepPreset, "validate")}
     />
-  {:else if activeRemotePreset}
-    <StepPresetStorageSummary side="remote" name={activeRemotePreset.name} />
   {/if}
+
+  <StepPresetActionDialog
+    open={presetDialog !== null}
+    action={presetDialog?.action ?? "rename"}
+    report={presetDialog?.report ?? null}
+    value={presetDialogValue}
+    busy={presetDialogBusy}
+    error={presetDialogError}
+    onValue={(value) => (presetDialogValue = value)}
+    onCancel={closeStepPresetDialog}
+    onConfirm={confirmStepPresetDialog}
+  />
 
   {#if contextMenu}
     <div
@@ -1417,11 +1731,11 @@
         {/if}
         <button type="button" role="menuitem" disabled={!contextMenu.item || selectedCount("local") !== 1 || transferBusy} onclick={() => renameLocalItem(contextMenu?.item ?? null)}>
           <span class="menuIcon" aria-hidden="true"><RenameIcon size={14} /></span>
-          <span>Rename</span>
+          <span>{selectedLocalPreset ? "Rename Step Preset" : "Rename"}</span>
         </button>
         <button type="button" role="menuitem" disabled={selectedCount("local") === 0 || transferBusy} onclick={deleteLocalSelection}>
           <span class="menuIcon" aria-hidden="true"><TrashIcon size={14} /></span>
-          <span>Delete selected ({selectedCount("local")})</span>
+          <span>{selectedLocalPreset && selectedCount("local") === 1 ? "Delete Step Preset" : `Delete selected (${selectedCount("local")})`}</span>
         </button>
         <div class="menuDivider"></div>
         <button type="button" role="menuitem" disabled={transferBusy} onclick={createLocalFolder}>
@@ -1437,13 +1751,23 @@
           <span class="menuIcon" aria-hidden="true"><DownloadIcon size={14} /></span>
           <span>Download selected ({selectedCount("remote")})</span>
         </button>
+        {#if selectedRemotePreset}
+          <button type="button" role="menuitem" disabled={transferBusy || presetLoading} onclick={() => inspectSelectedStepPreset("inspect")}>
+            <span class="menuIcon" aria-hidden="true"><FileIcon size={14} /></span>
+            <span>Inspect Step Preset</span>
+          </button>
+          <button type="button" role="menuitem" disabled={transferBusy || presetLoading} onclick={() => inspectSelectedStepPreset("validate")}>
+            <span class="menuIcon" aria-hidden="true"><FileIcon size={14} /></span>
+            <span>Validate Step Preset</span>
+          </button>
+        {/if}
         <button type="button" role="menuitem" disabled={!contextMenu.item || selectedCount("remote") !== 1 || transferBusy} onclick={() => renameRemoteItem(contextMenu?.item ?? null)}>
           <span class="menuIcon" aria-hidden="true"><RenameIcon size={14} /></span>
-          <span>Rename</span>
+          <span>{selectedRemotePreset ? "Rename Step Preset" : "Rename"}</span>
         </button>
         <button type="button" role="menuitem" disabled={selectedCount("remote") === 0 || transferBusy} onclick={deleteRemoteSelection}>
           <span class="menuIcon" aria-hidden="true"><TrashIcon size={14} /></span>
-          <span>Delete selected ({selectedCount("remote")})</span>
+          <span>{selectedRemotePreset && selectedCount("remote") === 1 ? "Delete Step Preset" : `Delete selected (${selectedCount("remote")})`}</span>
         </button>
         <div class="menuDivider"></div>
         <button type="button" role="menuitem" disabled={transferBusy || disabled} onclick={createRemoteFolder}>
