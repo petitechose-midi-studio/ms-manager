@@ -194,6 +194,12 @@ export type ManifestRepo = {
   sha: string;
 };
 
+export type ManifestTooling = {
+  repo: string;
+  ref: string;
+  sha: string;
+};
+
 export type ManifestAsset = {
   id: string;
   kind: string;
@@ -222,6 +228,7 @@ export type Manifest = {
   tag: string;
   published_at: string;
   repos: ManifestRepo[];
+  tooling?: ManifestTooling | null;
   assets: ManifestAsset[];
   install_sets: ManifestInstallSet[];
   pages?: ManifestPages | null;
