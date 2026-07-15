@@ -83,6 +83,10 @@ jobs:
           source_sha="${{ inputs.source_sha }}"
           tooling_sha="${{ inputs.tooling_sha }}"
 
+          if ! [[ "$release_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid release tag: $release_tag" >&2
+            exit 1
+          fi
           if ! [[ "$source_sha" =~ ^[0-9a-f]{40}$ ]]; then
             echo "Invalid source_sha: $source_sha" >&2
             exit 1
@@ -108,12 +112,14 @@ jobs:
           validate_sha petitechose-midi-studio/ms-dev-env "$tooling_sha"
 
           candidate_tag="rc-${source_sha}-tooling-${tooling_sha}"
+          release_version="${release_tag#v}"
           prerelease="false"
           if [[ "$release_tag" == *-* ]]; then
             prerelease="true"
           fi
 
           echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
+          echo "release_version=$release_version" >> "$GITHUB_OUTPUT"
           echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
           echo "tooling_sha=$tooling_sha" >> "$GITHUB_OUTPUT"
           echo "candidate_tag=$candidate_tag" >> "$GITHUB_OUTPUT"
@@ -192,7 +198,8 @@ jobs:
             --expected-producer-repo petitechose-midi-studio/ms-manager \
             --expected-producer-kind ms-manager-app \
             --expected-workflow-file .github/workflows/candidate.yml \
-            --expected-input-repos-json ../artifacts/input-repos.json
+            --expected-input-repos-json ../artifacts/input-repos.json \
+            --expected-package-version "${{ steps.vars.outputs.release_version }}"
 
       - name: Validate package policy
         shell: bash
