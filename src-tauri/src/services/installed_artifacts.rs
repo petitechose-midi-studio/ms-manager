@@ -12,9 +12,8 @@ pub fn installed_artifact_health(
 ) -> ArtifactHealth {
     let bridge = installed_oc_bridge_exe(layout);
     let loader = installed_loader_exe(layout);
-    let core_file_tool = installed_core_file_tool_exe(layout);
 
-    if !bridge.exists() || !loader.exists() || !core_file_tool.exists() {
+    if !bridge.exists() || !loader.exists() {
         return ArtifactHealth {
             source: ArtifactSource::Installed,
             ready: false,
@@ -55,10 +54,8 @@ pub fn installed_artifact_health_for_binding(
 ) -> ArtifactHealth {
     let bridge = installed_oc_bridge_exe_for_tag(layout, binding.installed_pinned_tag.as_deref());
     let loader = installed_loader_exe_for_tag(layout, binding.installed_pinned_tag.as_deref());
-    let core_file_tool =
-        installed_core_file_tool_exe_for_tag(layout, binding.installed_pinned_tag.as_deref());
 
-    if !bridge.exists() || !loader.exists() || !core_file_tool.exists() {
+    if !bridge.exists() || !loader.exists() {
         return ArtifactHealth {
             source: ArtifactSource::Installed,
             ready: false,
@@ -125,16 +122,6 @@ pub fn installed_loader_exe_for_tag(layout: &PayloadLayout, tag: Option<&str>) -
 
 pub fn installed_core_file_tool_exe(layout: &PayloadLayout) -> PathBuf {
     installed_bin(layout.current_dir().join("bin"), "ms-core-file-tool")
-}
-
-pub fn installed_core_file_tool_exe_for_tag(layout: &PayloadLayout, tag: Option<&str>) -> PathBuf {
-    match tag
-        .map(|value| value.trim())
-        .filter(|value| !value.is_empty())
-    {
-        Some(tag) => installed_bin(layout.version_dir(tag).join("bin"), "ms-core-file-tool"),
-        None => installed_core_file_tool_exe(layout),
-    }
 }
 
 fn installed_bin(bin: PathBuf, stem: &str) -> PathBuf {
@@ -233,4 +220,114 @@ pub fn installed_firmware_for_profile(
         "profile": profile,
         "dir": dir.display().to_string(),
     })))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use ms_manager_core::{BridgeApp, BridgeMode, FirmwareTarget, INSTALL_STATE_SCHEMA};
+
+    use super::*;
+
+    struct TestPayload {
+        root: PathBuf,
+        layout: PayloadLayout,
+    }
+
+    impl TestPayload {
+        fn new() -> Self {
+            let nonce = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let root = std::env::temp_dir().join(format!(
+                "ms-manager-installed-artifacts-{}-{nonce}",
+                std::process::id()
+            ));
+            let layout = PayloadLayout::resolve(Some(root.to_str().unwrap())).unwrap();
+            Self { root, layout }
+        }
+
+        fn install_runtime(&self, tag: &str, profile: &str) {
+            let bridge = installed_oc_bridge_exe_for_tag(&self.layout, Some(tag));
+            let loader = installed_loader_exe_for_tag(&self.layout, Some(tag));
+            std::fs::create_dir_all(bridge.parent().unwrap()).unwrap();
+            std::fs::write(bridge, b"bridge").unwrap();
+            std::fs::write(loader, b"loader").unwrap();
+
+            let firmware = self
+                .layout
+                .version_dir(tag)
+                .join("firmware")
+                .join(format!("midi-studio-{profile}-firmware.hex"));
+            std::fs::create_dir_all(firmware.parent().unwrap()).unwrap();
+            std::fs::write(firmware, b"firmware").unwrap();
+        }
+
+        fn install_current_runtime(&self) {
+            let bridge = installed_oc_bridge_exe(&self.layout);
+            let loader = installed_loader_exe(&self.layout);
+            std::fs::create_dir_all(bridge.parent().unwrap()).unwrap();
+            std::fs::write(bridge, b"bridge").unwrap();
+            std::fs::write(loader, b"loader").unwrap();
+        }
+    }
+
+    impl Drop for TestPayload {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+
+    #[test]
+    fn binding_health_does_not_require_cold_core_file_tool() {
+        let payload = TestPayload::new();
+        let tag = "v0.1.0-beta.2";
+        payload.install_runtime(tag, "default");
+
+        let binding = BridgeInstanceBinding {
+            instance_id: "teck".to_string(),
+            display_name: Some("Teck".to_string()),
+            app: BridgeApp::Bitwig,
+            mode: BridgeMode::Hardware,
+            controller_serial: "17081760".to_string(),
+            controller_vid: 0x16c0,
+            controller_pid: 0x0489,
+            target: FirmwareTarget::Standalone,
+            artifact_source: ArtifactSource::Installed,
+            installed_channel: Some(Channel::Beta),
+            installed_pinned_tag: Some(tag.to_string()),
+            host_udp_port: 9000,
+            control_port: 7999,
+            log_broadcast_port: 9999,
+            enabled: true,
+        };
+
+        assert!(!installed_bin(
+            payload.layout.version_dir(tag).join("bin"),
+            "ms-core-file-tool"
+        )
+        .exists());
+        let health = installed_artifact_health_for_binding(&payload.layout, None, &binding);
+        assert!(health.ready, "{:?}", health.message);
+    }
+
+    #[test]
+    fn management_health_does_not_require_cold_core_file_tool() {
+        let payload = TestPayload::new();
+        let tag = "v0.1.0-beta.2";
+        payload.install_current_runtime();
+        payload.install_runtime(tag, "default");
+        let installed = InstallState {
+            schema: INSTALL_STATE_SCHEMA,
+            channel: Channel::Beta,
+            profile: "default".to_string(),
+            tag: tag.to_string(),
+        };
+
+        assert!(!installed_core_file_tool_exe(&payload.layout).exists());
+        let health = installed_artifact_health(&payload.layout, Some(&installed));
+        assert!(health.ready, "{:?}", health.message);
+    }
 }
