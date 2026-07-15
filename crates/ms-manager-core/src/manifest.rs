@@ -2,6 +2,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{CoreError, Result};
 
+pub const MIN_SUPPORTED_MANIFEST_SCHEMA: u32 = 2;
+pub const MAX_SUPPORTED_MANIFEST_SCHEMA: u32 = 3;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ManifestChannel {
@@ -16,6 +19,8 @@ pub struct Manifest {
     pub tag: String,
     pub published_at: String,
     pub repos: Vec<ManifestRepo>,
+    #[serde(default)]
+    pub tooling: Option<ManifestTooling>,
     pub assets: Vec<ManifestAsset>,
     pub install_sets: Vec<ManifestInstallSet>,
     #[serde(default)]
@@ -26,6 +31,14 @@ pub struct Manifest {
 pub struct ManifestRepo {
     pub id: String,
     pub url: String,
+    pub sha: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ManifestTooling {
+    pub repo: String,
+    #[serde(rename = "ref")]
+    pub ref_name: String,
     pub sha: String,
 }
 
@@ -62,7 +75,7 @@ pub struct ManifestPages {
 
 pub fn parse_manifest_json(bytes: &[u8]) -> Result<Manifest> {
     let m: Manifest = serde_json::from_slice(bytes)?;
-    if m.schema != 2 {
+    if !(MIN_SUPPORTED_MANIFEST_SCHEMA..=MAX_SUPPORTED_MANIFEST_SCHEMA).contains(&m.schema) {
         return Err(CoreError::UnsupportedSchema(m.schema));
     }
     Ok(m)

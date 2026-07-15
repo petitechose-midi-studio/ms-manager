@@ -36,7 +36,8 @@ pub use github::{
 };
 pub use install_state::{INSTALL_STATE_SCHEMA, InstallState};
 pub use manifest::{
-    Manifest, ManifestAsset, ManifestChannel, parse_manifest_json, select_default_assets,
+    MAX_SUPPORTED_MANIFEST_SCHEMA, MIN_SUPPORTED_MANIFEST_SCHEMA, Manifest, ManifestAsset,
+    ManifestChannel, ManifestTooling, parse_manifest_json, select_default_assets,
     select_install_set_assets,
 };
 pub use platform::{Arch, Os, Platform};
@@ -114,9 +115,76 @@ mod tests {
 }"#;
 
         let m = parse_manifest_json(json.as_bytes()).unwrap();
+        assert!(m.tooling.is_none());
         let assets = select_default_assets(&m, "linux", "x86_64").unwrap();
         assert_eq!(assets.len(), 1);
         assert_eq!(assets[0].filename, "midi-studio-linux-x86_64-bundle.zip");
+    }
+
+    #[test]
+    fn manifest_schema_3_preserves_tooling_and_selects_assets() {
+        let json = r#"{
+  "schema": 3,
+  "channel": "beta",
+  "tag": "v0.1.0-beta.2",
+  "published_at": "2026-07-14T23:13:46Z",
+  "repos": [{"id": "core", "url": "https://example.invalid/core", "sha": "0000000000000000000000000000000000000000"}],
+  "tooling": {
+    "repo": "petitechose-midi-studio/ms-dev-env",
+    "ref": "main",
+    "sha": "1111111111111111111111111111111111111111"
+  },
+  "assets": [
+    {
+      "id": "bundle-windows-x86_64",
+      "kind": "bundle",
+      "os": "windows",
+      "arch": "x86_64",
+      "filename": "midi-studio-windows-x86_64-bundle.zip",
+      "size": 1,
+      "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    {
+      "id": "firmware-default",
+      "kind": "firmware",
+      "filename": "midi-studio-default-firmware.hex",
+      "size": 1,
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+    }
+  ],
+  "install_sets": [
+    {"id": "default", "os": "windows", "arch": "x86_64", "assets": ["bundle-windows-x86_64", "firmware-default"]}
+  ]
+}"#;
+
+        let manifest = parse_manifest_json(json.as_bytes()).unwrap();
+        let tooling = manifest.tooling.as_ref().unwrap();
+        assert_eq!(tooling.repo, "petitechose-midi-studio/ms-dev-env");
+        assert_eq!(tooling.ref_name, "main");
+        assert_eq!(tooling.sha, "1111111111111111111111111111111111111111");
+
+        let assets = select_default_assets(&manifest, "windows", "x86_64").unwrap();
+        assert_eq!(assets.len(), 2);
+        assert_eq!(assets[0].id, "bundle-windows-x86_64");
+        assert_eq!(assets[1].id, "firmware-default");
+    }
+
+    #[test]
+    fn manifest_rejects_future_schema() {
+        let json = r#"{
+  "schema": 4,
+  "channel": "beta",
+  "tag": "v0.1.0-beta.99",
+  "published_at": "2026-07-15T00:00:00Z",
+  "repos": [],
+  "assets": [],
+  "install_sets": []
+}"#;
+
+        assert!(matches!(
+            parse_manifest_json(json.as_bytes()),
+            Err(CoreError::UnsupportedSchema(4))
+        ));
     }
 
     #[test]
