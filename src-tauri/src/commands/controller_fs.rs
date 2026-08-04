@@ -5,7 +5,7 @@ use crate::api_error::{ApiError, ApiResult};
 use crate::commands::local_fs::resolve_local_storage_path;
 use crate::services::controller_fs::{
     BridgeBinaryClient, ControllerFsClient, ControllerFsError, FsCapabilities, FsListEntry,
-    DEFAULT_BRIDGE_CONTROL_PORT, DEFAULT_CONTROL_TIMEOUT, DEFAULT_PIPELINE_WINDOW,
+    DEFAULT_BRIDGE_CONTROL_PORT, DEFAULT_CONTROL_TIMEOUT, DEFAULT_READ_PIPELINE_WINDOW,
     FS_RPC_MAX_CHUNK_SIZE,
 };
 use crate::state::AppState;
@@ -235,7 +235,7 @@ pub(crate) fn controller_fs_client(
     )
     .with_chunk_size(FS_RPC_MAX_CHUNK_SIZE)
     .map_err(controller_fs_error)?
-    .with_pipeline_window(DEFAULT_PIPELINE_WINDOW)
+    .with_read_pipeline_window(DEFAULT_READ_PIPELINE_WINDOW)
     .map_err(controller_fs_error)
 }
 
