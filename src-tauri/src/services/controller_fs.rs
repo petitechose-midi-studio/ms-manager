@@ -1283,9 +1283,12 @@ impl ControllerFsClient {
         payload: Vec<u8>,
         expected: FsMessageId,
     ) -> ControllerFsResult<Vec<u8>> {
-        self.bridge
+        let request_id = decode_frame(&payload)?.request_id;
+        let response = self
+            .bridge
             .controller_rpc(payload, expected, DEFAULT_RPC_TIMEOUT_MS)
-            .await
+            .await?;
+        checked_rpc_terminal_response(response, request_id)
     }
 
     async fn rpc_many(
@@ -1308,7 +1311,17 @@ impl ControllerFsClient {
                 timeout_ms: DEFAULT_RPC_TIMEOUT_MS,
             })
             .collect::<Vec<_>>();
-        self.bridge.controller_rpc_batch(&batch).await
+        let request_ids = requests
+            .iter()
+            .map(|(payload, _)| decode_frame(payload).map(|frame| frame.request_id))
+            .collect::<ControllerFsResult<Vec<_>>>()?;
+        self.bridge
+            .controller_rpc_batch(&batch)
+            .await?
+            .into_iter()
+            .zip(request_ids)
+            .map(|(response, request_id)| checked_rpc_terminal_response(response, request_id))
+            .collect()
     }
 
     async fn legacy_write_rpc(
@@ -2323,6 +2336,45 @@ fn checked_response_frame(
     Ok(frame)
 }
 
+fn checked_rpc_terminal_response(
+    data: Vec<u8>,
+    expected_request_id: u16,
+) -> ControllerFsResult<Vec<u8>> {
+    let frame = decode_frame(&data)?;
+    if frame.request_id != expected_request_id {
+        return Err(ControllerFsError::new(
+            "invalid_state",
+            format!(
+                "request id mismatch: expected {}, got {}",
+                expected_request_id, frame.request_id
+            ),
+        ));
+    }
+    if frame.message_id != FsMessageId::ErrorResponse {
+        return Ok(data);
+    }
+    if frame.schema != FS_RPC_SCHEMA {
+        return Err(ControllerFsError::new(
+            "codec_error",
+            format!("unsupported filesystem rpc schema: {}", frame.schema),
+        ));
+    }
+
+    let mut reader = Reader::new(&frame.payload);
+    let status = FsStatus::from_u8(reader.u8()?)?;
+    reader.expect_empty()?;
+    if status == FsStatus::Ok {
+        return Err(ControllerFsError::new(
+            "protocol_error",
+            "filesystem error response carried an OK status",
+        ));
+    }
+    Err(ControllerFsError::new(
+        "remote_status",
+        format!("controller filesystem rpc failed: {}", status.label()),
+    ))
+}
+
 fn response_frame(data: &[u8], expected: FsMessageId) -> ControllerFsResult<FsFrame> {
     let frame = decode_frame(data)?;
     if frame.message_id != expected {
@@ -2585,6 +2637,32 @@ mod tests {
         let payload = capabilities_response(3);
         let error = decode_capabilities_response(&payload, 4).unwrap_err();
         assert_eq!(error.kind, "invalid_state");
+    }
+
+    #[test]
+    fn client_surfaces_filesystem_error_without_rpc_timeout() {
+        run_async(async {
+            let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let server = tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let request = read_binary_request(&mut stream).await;
+                let request_id = decode_frame(&request.payload).unwrap().request_id;
+                write_binary_response(
+                    &mut stream,
+                    request.token,
+                    &error_response(request_id, FsStatus::Busy),
+                )
+                .await;
+            });
+
+            let bridge = BridgeBinaryClient::new(port);
+            let mut client = ControllerFsClient::new(bridge);
+            let error = client.capabilities().await.unwrap_err();
+            assert_eq!(error.kind, "remote_status");
+            assert_eq!(error.message, "controller filesystem rpc failed: busy");
+            server.await.unwrap();
+        });
     }
 
     #[test]
@@ -4049,6 +4127,10 @@ mod tests {
 
     fn capabilities_response(request_id: u16) -> Vec<u8> {
         capabilities_response_with_features(request_id, 7 | FS_RPC_FEATURE_CONDITIONAL_MUTATIONS)
+    }
+
+    fn error_response(request_id: u16, status: FsStatus) -> Vec<u8> {
+        frame(FsMessageId::ErrorResponse, request_id, &[status as u8]).unwrap()
     }
 
     fn capabilities_response_with_features(request_id: u16, feature_flags: u32) -> Vec<u8> {
