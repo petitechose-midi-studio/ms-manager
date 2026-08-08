@@ -2,17 +2,23 @@ use std::collections::HashMap;
 use std::fmt;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::Path;
-use std::sync::atomic::{AtomicU16, Ordering};
+use std::sync::atomic::{AtomicU16, AtomicU32, Ordering};
+use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
+use tokio::time::Instant;
+
+use super::controller_fs_job::{
+    self as job, JobCapabilities, JobCommand, JobError, JobRequest, JobResponse, JobState,
+};
 
 pub const DEFAULT_BRIDGE_CONTROL_PORT: u16 = 7999;
 pub const DEFAULT_CONTROL_TIMEOUT: Duration = Duration::from_secs(2);
 pub const DEFAULT_RPC_TIMEOUT_MS: u32 = 2_000;
-pub const DEFAULT_PIPELINE_WINDOW: usize = 8;
+pub const DEFAULT_READ_PIPELINE_WINDOW: usize = 8;
 
 const BINARY_REQUEST_MAGIC: &[u8; 4] = b"OCRQ";
 const BINARY_RESPONSE_MAGIC: &[u8; 4] = b"OCRS";
@@ -32,6 +38,8 @@ pub const FS_RPC_SHA256_SIZE: usize = 32;
 pub const FS_RPC_FEATURE_CONDITIONAL_MUTATIONS: u32 = 1 << 3;
 
 static WRITE_SESSION_SEQUENCE: AtomicU16 = AtomicU16::new(1);
+static CLIENT_NONCE_SEQUENCE: OnceLock<AtomicU32> = OnceLock::new();
+static ACTIVE_MUTATION_PORTS: Mutex<[u16; 256]> = Mutex::new([0; 256]);
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ControllerFsError {
@@ -88,6 +96,8 @@ pub enum FsMessageId {
     ConditionalReplaceResponse = 0xF9,
     ConditionalDeleteRequest = 0xFA,
     ConditionalDeleteResponse = 0xFB,
+    JobRequest = 0xFC,
+    JobResponse = 0xFD,
 }
 
 impl FsMessageId {
@@ -120,6 +130,8 @@ impl FsMessageId {
             0xF9 => Ok(Self::ConditionalReplaceResponse),
             0xFA => Ok(Self::ConditionalDeleteRequest),
             0xFB => Ok(Self::ConditionalDeleteResponse),
+            0xFC => Ok(Self::JobRequest),
+            0xFD => Ok(Self::JobResponse),
             _ => Err(ControllerFsError::new(
                 "codec_error",
                 format!("unknown filesystem rpc message id: 0x{value:02x}"),
@@ -294,6 +306,12 @@ impl FsCapabilities {
             "controller firmware does not advertise conditional filesystem mutations",
         ))
     }
+
+    fn supports_persistence_jobs(&self) -> bool {
+        self.status == FsStatus::Ok
+            && self.rpc_schema == FS_RPC_SCHEMA
+            && (self.feature_flags & job::FILESYSTEM_FEATURE_PERSISTENCE_JOBS) != 0
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -387,6 +405,10 @@ impl BridgeBinaryClient {
     pub fn with_timeout(mut self, timeout: Duration) -> Self {
         self.timeout = timeout;
         self
+    }
+
+    fn port(&self) -> u16 {
+        self.port
     }
 
     pub async fn close(&mut self) {
@@ -603,13 +625,60 @@ async fn read_binary_response(stream: &mut TcpStream) -> std::io::Result<BinaryC
     })
 }
 
+#[derive(Debug, Clone, Copy)]
+enum PersistenceMode {
+    Unknown,
+    Legacy,
+    Jobs(JobCapabilities),
+}
+
+#[derive(Debug)]
+struct OwnedJobResponse {
+    state: JobState,
+    error: JobError,
+    flags: u8,
+    client_nonce: u32,
+    job_id: u32,
+    retry_after_ms: u32,
+    body: Vec<u8>,
+}
+
+impl OwnedJobResponse {
+    fn from_borrowed(response: JobResponse<'_>) -> Self {
+        Self {
+            state: response.state,
+            error: response.error,
+            flags: response.flags,
+            client_nonce: response.client_nonce,
+            job_id: response.job_id,
+            retry_after_ms: response.retry_after_ms,
+            body: response.body.to_vec(),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct MutationPermit {
+    control_port: u16,
+}
+
+impl Drop for MutationPermit {
+    fn drop(&mut self) {
+        let mut ports = active_mutation_ports();
+        if let Some(slot) = ports.iter_mut().find(|port| **port == self.control_port) {
+            *slot = 0;
+        }
+    }
+}
+
 pub struct ControllerFsClient {
     bridge: BridgeBinaryClient,
     next_request_id: u16,
     next_write_session_id: u16,
     chunk_size: usize,
-    pipeline_window: usize,
+    read_pipeline_window: usize,
     conditional_mutations_supported: Option<bool>,
+    persistence_mode: PersistenceMode,
 }
 
 impl ControllerFsClient {
@@ -620,8 +689,9 @@ impl ControllerFsClient {
             next_request_id: 1,
             next_write_session_id,
             chunk_size: FS_RPC_MAX_CHUNK_SIZE,
-            pipeline_window: DEFAULT_PIPELINE_WINDOW,
+            read_pipeline_window: DEFAULT_READ_PIPELINE_WINDOW,
             conditional_mutations_supported: None,
+            persistence_mode: PersistenceMode::Unknown,
         }
     }
 
@@ -636,14 +706,16 @@ impl ControllerFsClient {
         Ok(self)
     }
 
-    pub fn with_pipeline_window(mut self, pipeline_window: usize) -> ControllerFsResult<Self> {
-        if pipeline_window == 0 || pipeline_window > DEFAULT_PIPELINE_WINDOW {
+    pub fn with_read_pipeline_window(mut self, pipeline_window: usize) -> ControllerFsResult<Self> {
+        if pipeline_window == 0 || pipeline_window > DEFAULT_READ_PIPELINE_WINDOW {
             return Err(ControllerFsError::new(
                 "invalid_input",
-                format!("pipeline window must be between 1 and {DEFAULT_PIPELINE_WINDOW}"),
+                format!(
+                    "read pipeline window must be between 1 and {DEFAULT_READ_PIPELINE_WINDOW}"
+                ),
             ));
         }
-        self.pipeline_window = pipeline_window;
+        self.read_pipeline_window = pipeline_window;
         Ok(self)
     }
 
@@ -661,7 +733,59 @@ impl ControllerFsClient {
             .await?;
         let decoded = decode_capabilities_response(&response, request_id)?;
         self.conditional_mutations_supported = Some(decoded.supports_conditional_mutations());
+        self.persistence_mode = self.negotiate_persistence_mode(&decoded).await?;
         Ok(decoded)
+    }
+
+    async fn negotiate_persistence_mode(
+        &mut self,
+        capabilities: &FsCapabilities,
+    ) -> ControllerFsResult<PersistenceMode> {
+        if !capabilities.supports_persistence_jobs() {
+            return Ok(PersistenceMode::Legacy);
+        }
+
+        let supplier_version = bridge_job_protocol_version(self.bridge.port()).await;
+        if supplier_version.is_none_or(|version| version < job::PROTOCOL_VERSION) {
+            return Ok(PersistenceMode::Legacy);
+        }
+
+        let request_id = self.request_id();
+        let payload = job::encode_request(JobRequest {
+            request_id,
+            command: JobCommand::Capabilities,
+            client_nonce: 0,
+            job_id: 0,
+            total_deadline_ms: 0,
+            inner_request: &[],
+        })
+        .map_err(job_codec_error)?;
+        let response = self
+            .bridge
+            .controller_rpc(payload, FsMessageId::JobResponse, DEFAULT_RPC_TIMEOUT_MS)
+            .await
+            .map_err(|error| advertised_job_train_error("capabilities transport", error))?;
+        let negotiated = match job::decode_capabilities_response(&response, request_id) {
+            Ok(value) => value,
+            Err(error) => {
+                self.bridge.close().await;
+                return Err(advertised_job_codec_error("capabilities response", error));
+            }
+        };
+        Ok(PersistenceMode::Jobs(negotiated))
+    }
+
+    async fn ensure_persistence_mode(&mut self) -> ControllerFsResult<PersistenceMode> {
+        if matches!(self.persistence_mode, PersistenceMode::Unknown) {
+            self.capabilities().await?;
+        }
+        match self.persistence_mode {
+            PersistenceMode::Unknown => Err(ControllerFsError::new(
+                "invalid_state",
+                "persistence mode remained unknown after capability negotiation",
+            )),
+            mode => Ok(mode),
+        }
     }
 
     pub async fn stat(&mut self, path: &str) -> ControllerFsResult<FsStat> {
@@ -873,6 +997,9 @@ impl ControllerFsClient {
             )
         })?;
 
+        let _mutation_permit = acquire_mutation_permit(self.bridge.port())?;
+        let persistence_mode = self.ensure_persistence_mode().await?;
+
         // Session ids are client-owned by the firmware protocol. Do not reuse
         // the deterministic request-id sequence: after an ambiguous begin we
         // issue a best-effort abort, and a predictable id could otherwise
@@ -881,7 +1008,7 @@ impl ControllerFsClient {
         let begin_id = self.request_id();
         let begin = encode_write_begin_request(begin_id, session_id, path, total_bytes as u32)?;
         let begin_response = match self
-            .write_rpc(begin, FsMessageId::WriteBeginResponse, begin_id)
+            .legacy_write_rpc(begin, FsMessageId::WriteBeginResponse, begin_id)
             .await
         {
             Ok(value) => value,
@@ -910,8 +1037,8 @@ impl ControllerFsClient {
 
         let mut offset = 0usize;
         while offset < total_bytes as usize {
-            let batch = match self
-                .build_write_batch_from_reader(
+            let request = match self
+                .build_write_request_from_reader(
                     session_id,
                     &mut source_file,
                     offset,
@@ -925,50 +1052,46 @@ impl ControllerFsClient {
                     return Err(err);
                 }
             };
-            let responses = self
-                .rpc_many(
-                    &batch
-                        .iter()
-                        .map(|item| (item.payload.clone(), FsMessageId::WriteChunkResponse))
-                        .collect::<Vec<_>>(),
-                )
-                .await;
-            let responses = match responses {
+            let WriteRequest {
+                request_id,
+                size,
+                payload,
+            } = request;
+            let response = match self.rpc(payload, FsMessageId::WriteChunkResponse).await {
                 Ok(value) => value,
                 Err(err) => {
                     let _ = self.abort_write(session_id).await;
                     return Err(err);
                 }
             };
-            for (item, response) in batch.iter().zip(responses.iter()) {
-                let decoded = match decode_write_response(response, item.request_id) {
-                    Ok(value) => value,
-                    Err(err) => {
-                        let _ = self.abort_write(session_id).await;
-                        return Err(err);
-                    }
-                };
-                if decoded.status != FsStatus::Ok {
+            let decoded = match decode_write_response(&response, request_id) {
+                Ok(value) => value,
+                Err(err) => {
                     let _ = self.abort_write(session_id).await;
-                    return Err(remote_status_error("write-chunk", path, decoded.status));
+                    return Err(err);
                 }
-                if decoded.session_id != session_id || decoded.bytes_written as usize != item.size {
-                    let _ = self.abort_write(session_id).await;
-                    return Err(ControllerFsError::new(
-                        "invalid_state",
-                        "write chunk response mismatch",
-                    ));
-                }
-                offset += item.size;
-                on_progress(offset, total_bytes as usize);
+            };
+            if decoded.status != FsStatus::Ok {
+                let _ = self.abort_write(session_id).await;
+                return Err(remote_status_error("write-chunk", path, decoded.status));
             }
+            if decoded.session_id != session_id || decoded.bytes_written as usize != size {
+                let _ = self.abort_write(session_id).await;
+                return Err(ControllerFsError::new(
+                    "invalid_state",
+                    "write chunk response mismatch",
+                ));
+            }
+            offset += size;
+            on_progress(offset, total_bytes as usize);
         }
 
         let commit_id = self.request_id();
         let commit = encode_write_commit_request(commit_id, session_id)?;
         let commit_response = match self
-            .write_rpc(commit, FsMessageId::WriteCommitResponse, commit_id)
+            .mutation_rpc(persistence_mode, commit, FsMessageId::WriteCommitResponse)
             .await
+            .and_then(|response| decode_write_response(&response, commit_id))
         {
             Ok(value) => value,
             Err(err) => {
@@ -998,9 +1121,12 @@ impl ControllerFsClient {
     }
 
     pub async fn mkdir(&mut self, path: &str) -> ControllerFsResult<()> {
+        let _mutation_permit = acquire_mutation_permit(self.bridge.port())?;
+        let persistence_mode = self.ensure_persistence_mode().await?;
         let request_id = self.request_id();
         let payload = encode_mkdir_request(request_id, path)?;
-        self.status_rpc(
+        self.status_mutation_rpc(
+            persistence_mode,
             payload,
             FsMessageId::MkdirResponse,
             request_id,
@@ -1011,9 +1137,12 @@ impl ControllerFsClient {
     }
 
     pub async fn delete(&mut self, path: &str, recursive: bool) -> ControllerFsResult<()> {
+        let _mutation_permit = acquire_mutation_permit(self.bridge.port())?;
+        let persistence_mode = self.ensure_persistence_mode().await?;
         let request_id = self.request_id();
         let payload = encode_delete_request(request_id, path, recursive)?;
-        self.status_rpc(
+        self.status_mutation_rpc(
+            persistence_mode,
             payload,
             FsMessageId::DeleteResponse,
             request_id,
@@ -1024,9 +1153,12 @@ impl ControllerFsClient {
     }
 
     pub async fn rename(&mut self, from_path: &str, to_path: &str) -> ControllerFsResult<()> {
+        let _mutation_permit = acquire_mutation_permit(self.bridge.port())?;
+        let persistence_mode = self.ensure_persistence_mode().await?;
         let request_id = self.request_id();
         let payload = encode_rename_request(request_id, from_path, to_path)?;
-        self.status_rpc(
+        self.status_mutation_rpc(
+            persistence_mode,
             payload,
             FsMessageId::RenameResponse,
             request_id,
@@ -1049,6 +1181,8 @@ impl ControllerFsClient {
         replacement_sha256: &[u8; FS_RPC_SHA256_SIZE],
     ) -> ControllerFsResult<FsConditionalMutationResult> {
         self.require_negotiated_conditional_mutations()?;
+        let _mutation_permit = acquire_mutation_permit(self.bridge.port())?;
+        let persistence_mode = self.ensure_persistence_mode().await?;
         let request_id = self.request_id();
         let payload = encode_conditional_replace_request(
             request_id,
@@ -1059,7 +1193,11 @@ impl ControllerFsClient {
             replacement_sha256,
         )?;
         let response = self
-            .rpc(payload, FsMessageId::ConditionalReplaceResponse)
+            .mutation_rpc(
+                persistence_mode,
+                payload,
+                FsMessageId::ConditionalReplaceResponse,
+            )
             .await?;
         let decoded = decode_conditional_mutation_response(
             &response,
@@ -1079,6 +1217,8 @@ impl ControllerFsClient {
         expected_source_sha256: &[u8; FS_RPC_SHA256_SIZE],
     ) -> ControllerFsResult<FsConditionalMutationResult> {
         self.require_negotiated_conditional_mutations()?;
+        let _mutation_permit = acquire_mutation_permit(self.bridge.port())?;
+        let persistence_mode = self.ensure_persistence_mode().await?;
         let request_id = self.request_id();
         let payload = encode_conditional_delete_request(
             request_id,
@@ -1087,7 +1227,11 @@ impl ControllerFsClient {
             expected_source_sha256,
         )?;
         let response = self
-            .rpc(payload, FsMessageId::ConditionalDeleteResponse)
+            .mutation_rpc(
+                persistence_mode,
+                payload,
+                FsMessageId::ConditionalDeleteResponse,
+            )
             .await?;
         let decoded = decode_conditional_mutation_response(
             &response,
@@ -1116,7 +1260,7 @@ impl ControllerFsClient {
         let request_id = self.request_id();
         let payload = encode_write_abort_request(request_id, session_id)?;
         let response = self
-            .write_rpc(payload, FsMessageId::WriteAbortResponse, request_id)
+            .legacy_write_rpc(payload, FsMessageId::WriteAbortResponse, request_id)
             .await?;
         if response.session_id != session_id || response.bytes_written != 0 {
             return Err(ControllerFsError::new(
@@ -1139,16 +1283,19 @@ impl ControllerFsClient {
         payload: Vec<u8>,
         expected: FsMessageId,
     ) -> ControllerFsResult<Vec<u8>> {
-        self.bridge
+        let request_id = decode_frame(&payload)?.request_id;
+        let response = self
+            .bridge
             .controller_rpc(payload, expected, DEFAULT_RPC_TIMEOUT_MS)
-            .await
+            .await?;
+        checked_rpc_terminal_response(response, request_id)
     }
 
     async fn rpc_many(
         &mut self,
         requests: &[(Vec<u8>, FsMessageId)],
     ) -> ControllerFsResult<Vec<Vec<u8>>> {
-        if self.pipeline_window <= 1 || requests.len() <= 1 {
+        if self.read_pipeline_window <= 1 || requests.len() <= 1 {
             let mut responses = Vec::with_capacity(requests.len());
             for (payload, expected) in requests {
                 responses.push(self.rpc(payload.clone(), *expected).await?);
@@ -1164,10 +1311,20 @@ impl ControllerFsClient {
                 timeout_ms: DEFAULT_RPC_TIMEOUT_MS,
             })
             .collect::<Vec<_>>();
-        self.bridge.controller_rpc_batch(&batch).await
+        let request_ids = requests
+            .iter()
+            .map(|(payload, _)| decode_frame(payload).map(|frame| frame.request_id))
+            .collect::<ControllerFsResult<Vec<_>>>()?;
+        self.bridge
+            .controller_rpc_batch(&batch)
+            .await?
+            .into_iter()
+            .zip(request_ids)
+            .map(|(response, request_id)| checked_rpc_terminal_response(response, request_id))
+            .collect()
     }
 
-    async fn write_rpc(
+    async fn legacy_write_rpc(
         &mut self,
         payload: Vec<u8>,
         expected: FsMessageId,
@@ -1177,15 +1334,290 @@ impl ControllerFsClient {
         decode_write_response(&response, request_id)
     }
 
-    async fn status_rpc(
+    async fn mutation_rpc(
         &mut self,
+        mode: PersistenceMode,
+        payload: Vec<u8>,
+        expected: FsMessageId,
+    ) -> ControllerFsResult<Vec<u8>> {
+        match mode {
+            PersistenceMode::Unknown => Err(ControllerFsError::new(
+                "invalid_state",
+                "cannot mutate before persistence capability negotiation",
+            )),
+            PersistenceMode::Legacy => self.rpc(payload, expected).await,
+            PersistenceMode::Jobs(capabilities) => {
+                self.run_persistence_job(capabilities, payload).await
+            }
+        }
+    }
+
+    async fn run_persistence_job(
+        &mut self,
+        capabilities: JobCapabilities,
+        inner_request: Vec<u8>,
+    ) -> ControllerFsResult<Vec<u8>> {
+        let total_deadline_ms = job::checked_job_deadline(capabilities, inner_request.len())
+            .map_err(job_codec_error)?;
+        let supervision_started = Instant::now();
+        let mut collision_rekeyed = false;
+
+        loop {
+            let client_nonce = next_client_nonce(self.bridge.port())?;
+            let (start, replayed_after_ambiguity) = self
+                .start_persistence_job(client_nonce, total_deadline_ms, &inner_request)
+                .await?;
+            let duplicate = start.flags & job::FLAG_DUPLICATE_START != 0;
+            let conflict = start.state == JobState::Rejected && start.error == JobError::Conflict;
+
+            if (duplicate || conflict) && !replayed_after_ambiguity {
+                if collision_rekeyed {
+                    return Err(ControllerFsError::new(
+                        "persistence_job_nonce_collision",
+                        "persistence job nonce collided twice; operation was not adopted",
+                    ));
+                }
+                collision_rekeyed = true;
+                continue;
+            }
+            if conflict {
+                return Err(ControllerFsError::new(
+                    "persistence_job_start_ambiguous",
+                    "persistence job replay conflicted after an ambiguous START",
+                ));
+            }
+
+            return self.poll_persistence_job(start, supervision_started).await;
+        }
+    }
+
+    async fn start_persistence_job(
+        &mut self,
+        client_nonce: u32,
+        total_deadline_ms: u32,
+        inner_request: &[u8],
+    ) -> ControllerFsResult<(OwnedJobResponse, bool)> {
+        let request_id = self.request_id();
+        let payload = job::encode_request(JobRequest {
+            request_id,
+            command: JobCommand::Start,
+            client_nonce,
+            job_id: 0,
+            total_deadline_ms,
+            inner_request,
+        })
+        .map_err(job_codec_error)?;
+
+        match self
+            .send_job_payload(&payload, request_id, JobCommand::Start, client_nonce, None)
+            .await
+        {
+            Ok(response) => Ok((response, false)),
+            Err(first_error) => match self
+                .send_job_payload(&payload, request_id, JobCommand::Start, client_nonce, None)
+                .await
+            {
+                Ok(response) => Ok((response, true)),
+                Err(second_error) => Err(ControllerFsError::new(
+                    "persistence_job_start_ambiguous",
+                    format!(
+                        "persistence START remained ambiguous after one identical replay: {}; {}",
+                        first_error.message, second_error.message
+                    ),
+                )),
+            },
+        }
+    }
+
+    async fn poll_persistence_job(
+        &mut self,
+        mut response: OwnedJobResponse,
+        supervision_started: Instant,
+    ) -> ControllerFsResult<Vec<u8>> {
+        let client_nonce = response.client_nonce;
+        let job_id = response.job_id;
+        let mut poll_count = 0u16;
+        let mut poll_delay_ms = 0u32;
+        let mut cancel_sent = false;
+
+        loop {
+            if response.state.is_terminal() {
+                return terminal_job_result(response);
+            }
+            if !matches!(
+                response.state,
+                JobState::Accepted | JobState::Pending | JobState::CancelPending
+            ) || job_id == 0
+            {
+                return Err(ControllerFsError::new(
+                    "persistence_job_protocol_error",
+                    "persistence job entered an invalid non-terminal state",
+                ));
+            }
+
+            let elapsed = supervision_started.elapsed();
+            if elapsed >= Duration::from_millis(job::MANAGER_SUPERVISION_MS)
+                || poll_count >= job::MAX_POLL_COUNT
+            {
+                if !cancel_sent {
+                    match self.cancel_persistence_job(client_nonce, job_id).await {
+                        Ok(cancel_response) if cancel_response.state.is_terminal() => {
+                            return terminal_job_result(cancel_response);
+                        }
+                        Ok(_) => {}
+                        Err(_) => {}
+                    }
+                }
+                return Err(ControllerFsError::new(
+                    "persistence_job_supervision_ambiguous",
+                    format!(
+                        "persistence job {job_id} exceeded Manager supervision after {poll_count} polls; cancellation outcome is not terminal"
+                    ),
+                ));
+            }
+
+            poll_delay_ms = job::next_poll_delay_ms(poll_delay_ms, response.retry_after_ms);
+            let supervision_remaining =
+                Duration::from_millis(job::MANAGER_SUPERVISION_MS).saturating_sub(elapsed);
+            tokio::time::sleep(
+                Duration::from_millis(u64::from(poll_delay_ms)).min(supervision_remaining),
+            )
+            .await;
+
+            // Do not launch another potentially multi-second RPC once the
+            // Manager supervision window has closed. The next loop turn owns
+            // the single bounded cancellation attempt.
+            if supervision_started.elapsed() >= Duration::from_millis(job::MANAGER_SUPERVISION_MS) {
+                continue;
+            }
+
+            poll_count += 1;
+            let request_id = self.request_id();
+            let payload = job::encode_request(JobRequest {
+                request_id,
+                command: JobCommand::Poll,
+                client_nonce,
+                job_id,
+                total_deadline_ms: 0,
+                inner_request: &[],
+            })
+            .map_err(job_codec_error)?;
+            match self
+                .send_job_payload(
+                    &payload,
+                    request_id,
+                    JobCommand::Poll,
+                    client_nonce,
+                    Some(job_id),
+                )
+                .await
+            {
+                Ok(poll_response) => response = poll_response,
+                Err(poll_error) => {
+                    if cancel_sent {
+                        return Err(job_after_admission_ambiguous(
+                            job_id,
+                            "poll failed after cancellation",
+                            poll_error,
+                        ));
+                    }
+                    cancel_sent = true;
+                    response = self
+                        .cancel_persistence_job(client_nonce, job_id)
+                        .await
+                        .map_err(|cancel_error| {
+                            ControllerFsError::new(
+                                "persistence_job_ambiguous",
+                                format!(
+                                    "persistence job {job_id} poll failed after admission ({}); its single cancellation attempt also failed ({})",
+                                    poll_error.message, cancel_error.message
+                                ),
+                            )
+                        })?;
+                }
+            }
+        }
+    }
+
+    async fn cancel_persistence_job(
+        &mut self,
+        client_nonce: u32,
+        job_id: u32,
+    ) -> ControllerFsResult<OwnedJobResponse> {
+        let request_id = self.request_id();
+        let payload = job::encode_request(JobRequest {
+            request_id,
+            command: JobCommand::Cancel,
+            client_nonce,
+            job_id,
+            total_deadline_ms: 0,
+            inner_request: &[],
+        })
+        .map_err(job_codec_error)?;
+        self.send_job_payload(
+            &payload,
+            request_id,
+            JobCommand::Cancel,
+            client_nonce,
+            Some(job_id),
+        )
+        .await
+    }
+
+    async fn send_job_payload(
+        &mut self,
+        payload: &[u8],
+        expected_request_id: u16,
+        expected_command: JobCommand,
+        expected_nonce: u32,
+        expected_job_id: Option<u32>,
+    ) -> ControllerFsResult<OwnedJobResponse> {
+        let encoded = self
+            .bridge
+            .controller_rpc(
+                payload.to_vec(),
+                FsMessageId::JobResponse,
+                DEFAULT_RPC_TIMEOUT_MS,
+            )
+            .await?;
+        let decoded = match job::decode_response(&encoded) {
+            Ok(value) => value,
+            Err(error) => {
+                self.bridge.close().await;
+                return Err(job_codec_error(error));
+            }
+        };
+        if decoded.request_id != expected_request_id
+            || decoded.command != expected_command
+            || decoded.client_nonce != expected_nonce
+            || expected_job_id.is_some_and(|job_id| decoded.job_id != job_id)
+        {
+            self.bridge.close().await;
+            return Err(ControllerFsError::new(
+                "persistence_job_protocol_error",
+                "persistence job response identity does not match its exact request",
+            ));
+        }
+        if expected_command != JobCommand::Start && decoded.state == JobState::Accepted {
+            self.bridge.close().await;
+            return Err(ControllerFsError::new(
+                "persistence_job_protocol_error",
+                "only START may return the accepted state",
+            ));
+        }
+        Ok(OwnedJobResponse::from_borrowed(decoded))
+    }
+
+    async fn status_mutation_rpc(
+        &mut self,
+        mode: PersistenceMode,
         payload: Vec<u8>,
         expected: FsMessageId,
         request_id: u16,
         action: &str,
         path: &str,
     ) -> ControllerFsResult<()> {
-        let response = self.rpc(payload, expected).await?;
+        let response = self.mutation_rpc(mode, payload, expected).await?;
         let decoded = decode_status_response(&response, request_id)?;
         if decoded.status != FsStatus::Ok {
             return Err(remote_status_error(action, path, decoded.status));
@@ -1201,7 +1633,7 @@ impl ControllerFsClient {
     ) -> ControllerFsResult<Vec<ReadRequest>> {
         let mut batch = Vec::new();
         let mut cursor = offset;
-        while cursor < size_bytes && batch.len() < self.pipeline_window {
+        while cursor < size_bytes && batch.len() < self.read_pipeline_window {
             let request_id = self.request_id();
             let size = self.chunk_size.min((size_bytes - cursor) as usize);
             let payload = encode_read_request(request_id, path, cursor, size as u16)?;
@@ -1216,35 +1648,34 @@ impl ControllerFsClient {
         Ok(batch)
     }
 
-    async fn build_write_batch_from_reader(
+    async fn build_write_request_from_reader(
         &mut self,
         session_id: u16,
         source: &mut tokio::fs::File,
         offset: usize,
         total_size: usize,
-    ) -> ControllerFsResult<Vec<WriteRequest>> {
-        let mut batch = Vec::new();
-        let mut cursor = offset;
-        while cursor < total_size && batch.len() < self.pipeline_window {
-            let size = self.chunk_size.min(total_size - cursor);
-            let mut chunk = vec![0u8; size];
-            source.read_exact(&mut chunk).await.map_err(|err| {
-                ControllerFsError::new(
-                    "local_io_failed",
-                    format!("read local transfer file: {err}"),
-                )
-            })?;
-            let request_id = self.request_id();
-            let payload =
-                encode_write_chunk_request(request_id, session_id, cursor as u32, &chunk)?;
-            batch.push(WriteRequest {
-                request_id,
-                size,
-                payload,
-            });
-            cursor += size;
+    ) -> ControllerFsResult<WriteRequest> {
+        if offset >= total_size {
+            return Err(ControllerFsError::new(
+                "invalid_state",
+                "cannot build a write request at or beyond end of file",
+            ));
         }
-        Ok(batch)
+        let size = self.chunk_size.min(total_size - offset);
+        let mut chunk = vec![0u8; size];
+        source.read_exact(&mut chunk).await.map_err(|err| {
+            ControllerFsError::new(
+                "local_io_failed",
+                format!("read local transfer file: {err}"),
+            )
+        })?;
+        let request_id = self.request_id();
+        let payload = encode_write_chunk_request(request_id, session_id, offset as u32, &chunk)?;
+        Ok(WriteRequest {
+            request_id,
+            size,
+            payload,
+        })
     }
 
     fn request_id(&mut self) -> u16 {
@@ -1264,6 +1695,173 @@ impl ControllerFsClient {
         }
         value
     }
+}
+
+fn active_mutation_ports() -> MutexGuard<'static, [u16; 256]> {
+    ACTIVE_MUTATION_PORTS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+fn acquire_mutation_permit(control_port: u16) -> ControllerFsResult<MutationPermit> {
+    if control_port == 0 {
+        return Err(ControllerFsError::new(
+            "invalid_input",
+            "bridge control port cannot be zero",
+        ));
+    }
+    let mut ports = active_mutation_ports();
+    if ports.contains(&control_port) {
+        return Err(ControllerFsError::new(
+            "mutation_busy",
+            format!(
+                "another controller filesystem mutation is already active on control port {control_port}"
+            ),
+        ));
+    }
+    let Some(slot) = ports.iter_mut().find(|port| **port == 0) else {
+        return Err(ControllerFsError::new(
+            "mutation_registry_full",
+            "all 256 bounded controller mutation slots are active",
+        ));
+    };
+    *slot = control_port;
+    Ok(MutationPermit { control_port })
+}
+
+async fn bridge_job_protocol_version(control_port: u16) -> Option<u8> {
+    let value = super::bridge_ctl::send_command(control_port, "status", DEFAULT_CONTROL_TIMEOUT)
+        .await
+        .ok()?;
+    let schema = value.get("schema")?.as_u64()?;
+    let ok = value.get("ok")?.as_bool()?;
+    let version = value.get("persistence_job_protocol_version")?.as_u64()?;
+    if schema != 1 || !ok {
+        return None;
+    }
+    u8::try_from(version).ok().filter(|version| *version != 0)
+}
+
+fn initial_client_nonce(control_port: u16) -> u32 {
+    let stamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos() as u64;
+    let mixed = stamp
+        ^ stamp.rotate_right(19)
+        ^ u64::from(std::process::id()).rotate_left(17)
+        ^ u64::from(control_port).rotate_left(41);
+    let folded = (mixed ^ (mixed >> 32)) as u32;
+    match folded {
+        0 | u32::MAX => 1,
+        value => value,
+    }
+}
+
+fn next_client_nonce(control_port: u16) -> ControllerFsResult<u32> {
+    let sequence =
+        CLIENT_NONCE_SEQUENCE.get_or_init(|| AtomicU32::new(initial_client_nonce(control_port)));
+    loop {
+        let current = sequence.load(Ordering::Relaxed);
+        let successor = checked_nonce_successor(current)?;
+        if sequence
+            .compare_exchange_weak(current, successor, Ordering::Relaxed, Ordering::Relaxed)
+            .is_ok()
+        {
+            return Ok(current);
+        }
+    }
+}
+
+fn checked_nonce_successor(current: u32) -> ControllerFsResult<u32> {
+    current
+        .checked_add(1)
+        .filter(|value| *value != 1)
+        .ok_or_else(|| {
+            ControllerFsError::new(
+                "persistence_job_nonce_exhausted",
+                "persistence job nonce sequence is exhausted; restart after retained jobs expire",
+            )
+        })
+}
+
+fn job_codec_error(error: job::JobCodecError) -> ControllerFsError {
+    ControllerFsError::new(
+        "persistence_job_codec_error",
+        format!("persistence job codec rejected data: {error}"),
+    )
+}
+
+fn advertised_job_codec_error(context: &str, error: job::JobCodecError) -> ControllerFsError {
+    ControllerFsError::new(
+        "persistence_job_negotiation_failed",
+        format!("advertised persistence job {context} is incompatible: {error}"),
+    )
+}
+
+fn advertised_job_train_error(context: &str, error: ControllerFsError) -> ControllerFsError {
+    ControllerFsError::new(
+        "persistence_job_negotiation_failed",
+        format!(
+            "advertised persistence job {context} failed without legacy fallback: {}",
+            error.message
+        ),
+    )
+}
+
+fn terminal_job_result(response: OwnedJobResponse) -> ControllerFsResult<Vec<u8>> {
+    match response.state {
+        JobState::Completed => Ok(response.body),
+        JobState::Cancelled | JobState::Failed | JobState::Rejected => {
+            Err(terminal_job_error(&response))
+        }
+        _ => Err(ControllerFsError::new(
+            "persistence_job_protocol_error",
+            "non-terminal persistence job was passed to terminal handling",
+        )),
+    }
+}
+
+fn terminal_job_error(response: &OwnedJobResponse) -> ControllerFsError {
+    let kind = match response.error {
+        JobError::None => "persistence_job_protocol_error",
+        JobError::InvalidMessage => "persistence_invalid_message",
+        JobError::InvalidArgument => "persistence_invalid_argument",
+        JobError::Unsupported => "persistence_unsupported",
+        JobError::NotFound => "persistence_job_not_found",
+        JobError::BusyPlaying => "persistence_busy_playing",
+        JobError::ResourceExhausted => "persistence_resource_exhausted",
+        JobError::Conflict => "persistence_job_conflict",
+        JobError::PreconditionFailed => "precondition_failed",
+        JobError::DeadlineExceeded => "persistence_deadline_exceeded",
+        JobError::MediaChanged => "persistence_media_changed",
+        JobError::StorageUnavailable => "persistence_storage_unavailable",
+        JobError::StorageReadFailed => "persistence_storage_read_failed",
+        JobError::StorageWriteFailed => "persistence_storage_write_failed",
+        JobError::StorageCorrupt => "persistence_storage_corrupt",
+        JobError::Cancelled => "persistence_job_cancelled",
+        JobError::Internal => "persistence_internal",
+        JobError::LegacyBusy => "persistence_legacy_busy",
+        JobError::LegacyStorageError => "persistence_legacy_storage_error",
+    };
+    ControllerFsError::new(
+        kind,
+        format!(
+            "persistence job {} ended as {:?} with {:?} (flags=0x{:02x})",
+            response.job_id, response.state, response.error, response.flags
+        ),
+    )
+}
+
+fn job_after_admission_ambiguous(
+    job_id: u32,
+    context: &str,
+    error: ControllerFsError,
+) -> ControllerFsError {
+    ControllerFsError::new(
+        "persistence_job_ambiguous",
+        format!("persistence job {job_id} {context}: {}", error.message),
+    )
 }
 
 fn initial_write_session_id(port: u16) -> u16 {
@@ -1738,6 +2336,45 @@ fn checked_response_frame(
     Ok(frame)
 }
 
+fn checked_rpc_terminal_response(
+    data: Vec<u8>,
+    expected_request_id: u16,
+) -> ControllerFsResult<Vec<u8>> {
+    let frame = decode_frame(&data)?;
+    if frame.request_id != expected_request_id {
+        return Err(ControllerFsError::new(
+            "invalid_state",
+            format!(
+                "request id mismatch: expected {}, got {}",
+                expected_request_id, frame.request_id
+            ),
+        ));
+    }
+    if frame.message_id != FsMessageId::ErrorResponse {
+        return Ok(data);
+    }
+    if frame.schema != FS_RPC_SCHEMA {
+        return Err(ControllerFsError::new(
+            "codec_error",
+            format!("unsupported filesystem rpc schema: {}", frame.schema),
+        ));
+    }
+
+    let mut reader = Reader::new(&frame.payload);
+    let status = FsStatus::from_u8(reader.u8()?)?;
+    reader.expect_empty()?;
+    if status == FsStatus::Ok {
+        return Err(ControllerFsError::new(
+            "protocol_error",
+            "filesystem error response carried an OK status",
+        ));
+    }
+    Err(ControllerFsError::new(
+        "remote_status",
+        format!("controller filesystem rpc failed: {}", status.label()),
+    ))
+}
+
 fn response_frame(data: &[u8], expected: FsMessageId) -> ControllerFsResult<FsFrame> {
     let frame = decode_frame(data)?;
     if frame.message_id != expected {
@@ -1882,6 +2519,8 @@ fn message_name(message_id: FsMessageId) -> &'static str {
         FsMessageId::ConditionalReplaceResponse => "FsConditionalReplaceResponse",
         FsMessageId::ConditionalDeleteRequest => "FsConditionalDeleteRequest",
         FsMessageId::ConditionalDeleteResponse => "FsConditionalDeleteResponse",
+        FsMessageId::JobRequest => "FsJobRequest",
+        FsMessageId::JobResponse => "FsJobResponse",
     }
 }
 
@@ -1998,6 +2637,32 @@ mod tests {
         let payload = capabilities_response(3);
         let error = decode_capabilities_response(&payload, 4).unwrap_err();
         assert_eq!(error.kind, "invalid_state");
+    }
+
+    #[test]
+    fn client_surfaces_filesystem_error_without_rpc_timeout() {
+        run_async(async {
+            let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let server = tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let request = read_binary_request(&mut stream).await;
+                let request_id = decode_frame(&request.payload).unwrap().request_id;
+                write_binary_response(
+                    &mut stream,
+                    request.token,
+                    &error_response(request_id, FsStatus::Busy),
+                )
+                .await;
+            });
+
+            let bridge = BridgeBinaryClient::new(port);
+            let mut client = ControllerFsClient::new(bridge);
+            let error = client.capabilities().await.unwrap_err();
+            assert_eq!(error.kind, "remote_status");
+            assert_eq!(error.message, "controller filesystem rpc failed: busy");
+            server.await.unwrap();
+        });
     }
 
     #[test]
@@ -2245,7 +2910,7 @@ mod tests {
             let mut client = ControllerFsClient::new(bridge)
                 .with_chunk_size(4)
                 .unwrap()
-                .with_pipeline_window(3)
+                .with_read_pipeline_window(3)
                 .unwrap();
             let destination = temp_test_path("controller-fs-pull.bin");
             let _ = std::fs::remove_file(&destination);
@@ -2300,7 +2965,7 @@ mod tests {
     }
 
     #[test]
-    fn client_writes_file_with_pipeline() {
+    fn client_writes_file_one_acknowledged_chunk_at_a_time() {
         run_async(async {
             let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
             let port = listener.local_addr().unwrap().port();
@@ -2308,38 +2973,43 @@ mod tests {
                 let (mut stream, _) = listener.accept().await.unwrap();
                 let begin = read_binary_request(&mut stream).await;
                 let session_id = write_begin_session_id(&begin.payload);
+                let begin_id = decode_frame(&begin.payload).unwrap().request_id;
                 write_binary_response(
                     &mut stream,
                     begin.token,
-                    &write_response(FsMessageId::WriteBeginResponse, 2, session_id, 0),
+                    &write_response(FsMessageId::WriteBeginResponse, begin_id, session_id, 0),
                 )
                 .await;
                 let first = read_binary_request(&mut stream).await;
-                let second = read_binary_request(&mut stream).await;
-                let third = read_binary_request(&mut stream).await;
+                let first_id = decode_frame(&first.payload).unwrap().request_id;
                 write_binary_response(
                     &mut stream,
                     first.token,
-                    &write_response(FsMessageId::WriteChunkResponse, 3, session_id, 4),
+                    &write_response(FsMessageId::WriteChunkResponse, first_id, session_id, 4),
                 )
                 .await;
+                let second = read_binary_request(&mut stream).await;
+                let second_id = decode_frame(&second.payload).unwrap().request_id;
                 write_binary_response(
                     &mut stream,
                     second.token,
-                    &write_response(FsMessageId::WriteChunkResponse, 4, session_id, 4),
+                    &write_response(FsMessageId::WriteChunkResponse, second_id, session_id, 4),
                 )
                 .await;
+                let third = read_binary_request(&mut stream).await;
+                let third_id = decode_frame(&third.payload).unwrap().request_id;
                 write_binary_response(
                     &mut stream,
                     third.token,
-                    &write_response(FsMessageId::WriteChunkResponse, 5, session_id, 1),
+                    &write_response(FsMessageId::WriteChunkResponse, third_id, session_id, 1),
                 )
                 .await;
                 let commit = read_binary_request(&mut stream).await;
+                let commit_id = decode_frame(&commit.payload).unwrap().request_id;
                 write_binary_response(
                     &mut stream,
                     commit.token,
-                    &write_response(FsMessageId::WriteCommitResponse, 6, session_id, 0),
+                    &write_response(FsMessageId::WriteCommitResponse, commit_id, session_id, 0),
                 )
                 .await;
                 (first.payload, second.payload, third.payload, commit.payload)
@@ -2349,8 +3019,9 @@ mod tests {
             let mut client = ControllerFsClient::new(bridge)
                 .with_chunk_size(4)
                 .unwrap()
-                .with_pipeline_window(3)
+                .with_read_pipeline_window(3)
                 .unwrap();
+            client.persistence_mode = PersistenceMode::Legacy;
             let source = temp_test_path("controller-fs-push.bin");
             std::fs::write(&source, b"abcdefghi").unwrap();
             client
@@ -2379,17 +3050,19 @@ mod tests {
                 let (mut stream, _) = listener.accept().await.unwrap();
                 let begin = read_binary_request(&mut stream).await;
                 let session_id = write_begin_session_id(&begin.payload);
+                let begin_id = decode_frame(&begin.payload).unwrap().request_id;
                 write_binary_response(
                     &mut stream,
                     begin.token,
-                    &write_response(FsMessageId::WriteBeginResponse, 2, session_id, 0),
+                    &write_response(FsMessageId::WriteBeginResponse, begin_id, session_id, 0),
                 )
                 .await;
                 let commit = read_binary_request(&mut stream).await;
+                let commit_id = decode_frame(&commit.payload).unwrap().request_id;
                 write_binary_response(
                     &mut stream,
                     commit.token,
-                    &write_response(FsMessageId::WriteCommitResponse, 3, session_id, 0),
+                    &write_response(FsMessageId::WriteCommitResponse, commit_id, session_id, 0),
                 )
                 .await;
                 (begin.payload, commit.payload)
@@ -2399,8 +3072,9 @@ mod tests {
             let mut client = ControllerFsClient::new(bridge)
                 .with_chunk_size(4)
                 .unwrap()
-                .with_pipeline_window(3)
+                .with_read_pipeline_window(3)
                 .unwrap();
+            client.persistence_mode = PersistenceMode::Legacy;
             let source = temp_test_path("controller-fs-empty-push.bin");
             std::fs::write(&source, b"").unwrap();
             client
@@ -2418,6 +3092,95 @@ mod tests {
                 decode_frame(&commit).unwrap().message_id,
                 FsMessageId::WriteCommitRequest
             );
+        });
+    }
+
+    #[test]
+    fn new_upload_streams_legacy_chunks_then_commits_as_one_job() {
+        run_async(async {
+            let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let server = tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let begin = read_binary_request(&mut stream).await;
+                let begin_frame = decode_frame(&begin.payload).unwrap();
+                let session_id = write_begin_session_id(&begin.payload);
+                write_binary_response(
+                    &mut stream,
+                    begin.token,
+                    &write_response(
+                        FsMessageId::WriteBeginResponse,
+                        begin_frame.request_id,
+                        session_id,
+                        0,
+                    ),
+                )
+                .await;
+
+                for expected_size in [4, 1] {
+                    let chunk = read_binary_request(&mut stream).await;
+                    let chunk_frame = decode_frame(&chunk.payload).unwrap();
+                    assert_eq!(chunk_frame.message_id, FsMessageId::WriteChunkRequest);
+                    write_binary_response(
+                        &mut stream,
+                        chunk.token,
+                        &write_response(
+                            FsMessageId::WriteChunkResponse,
+                            chunk_frame.request_id,
+                            session_id,
+                            expected_size,
+                        ),
+                    )
+                    .await;
+                }
+
+                let start = read_binary_request(&mut stream).await;
+                let job_request = job::decode_request(&start.payload).unwrap();
+                assert_eq!(job_request.command, JobCommand::Start);
+                let commit = decode_frame(job_request.inner_request).unwrap();
+                assert_eq!(commit.message_id, FsMessageId::WriteCommitRequest);
+                let terminal = write_response(
+                    FsMessageId::WriteCommitResponse,
+                    commit.request_id,
+                    session_id,
+                    0,
+                );
+                write_binary_response(
+                    &mut stream,
+                    start.token,
+                    &encoded_job_response(JobResponse {
+                        request_id: job_request.request_id,
+                        command: JobCommand::Start,
+                        state: JobState::Completed,
+                        error: JobError::None,
+                        flags: 0,
+                        client_nonce: job_request.client_nonce,
+                        job_id: 73,
+                        retry_after_ms: 0,
+                        progress_per_mille: 1_000,
+                        body: &terminal,
+                    }),
+                )
+                .await;
+            });
+
+            let bridge = BridgeBinaryClient::new(port);
+            let mut client = ControllerFsClient::new(bridge)
+                .with_chunk_size(4)
+                .unwrap()
+                .with_read_pipeline_window(3)
+                .unwrap();
+            client.persistence_mode = PersistenceMode::Jobs(JobCapabilities::V1);
+            let source = temp_test_path("controller-fs-job-push.bin");
+            std::fs::write(&source, b"abcde").unwrap();
+            let bytes = client
+                .push_file_from_path_with_progress("projects/job.bin", &source, |_, _| {})
+                .await
+                .unwrap();
+            assert_eq!(bytes, 5);
+            let _ = std::fs::remove_file(&source);
+            client.close().await;
+            server.await.unwrap();
         });
     }
 
@@ -2530,6 +3293,761 @@ mod tests {
         });
     }
 
+    #[test]
+    fn mutation_permit_is_exactly_one_per_control_port() {
+        let new_static_bytes =
+            std::mem::size_of::<Mutex<[u16; 256]>>() + std::mem::size_of::<OnceLock<AtomicU32>>();
+        assert!(new_static_bytes <= 544, "static bytes: {new_static_bytes}");
+
+        let first = acquire_mutation_permit(65_534).unwrap();
+        let error = acquire_mutation_permit(65_534).unwrap_err();
+        assert_eq!(error.kind, "mutation_busy");
+
+        let independent = acquire_mutation_permit(65_533).unwrap();
+        drop(first);
+        let reacquired = acquire_mutation_permit(65_534).unwrap();
+        drop(reacquired);
+        drop(independent);
+    }
+
+    #[test]
+    fn bridge_job_supplier_discovery_is_additive_and_optional() {
+        run_async(async {
+            let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let server = tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let request = read_json_request(&mut stream).await;
+                assert_eq!(
+                    request.get("cmd").and_then(|value| value.as_str()),
+                    Some("status")
+                );
+                stream
+                    .write_all(
+                        br#"{"schema":1,"ok":true,"paused":false,"serial_open":true,"message":null,"persistence_job_protocol_version":1}"#,
+                    )
+                    .await
+                    .unwrap();
+                stream.write_all(b"\n").await.unwrap();
+                stream.shutdown().await.unwrap();
+            });
+            assert_eq!(bridge_job_protocol_version(port).await, Some(1));
+            server.await.unwrap();
+
+            let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let server = tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let _ = read_json_request(&mut stream).await;
+                stream
+                    .write_all(
+                        br#"{"schema":1,"ok":true,"paused":false,"serial_open":true,"message":null}"#,
+                    )
+                    .await
+                    .unwrap();
+                stream.write_all(b"\n").await.unwrap();
+                stream.shutdown().await.unwrap();
+            });
+            assert_eq!(bridge_job_protocol_version(port).await, None);
+            server.await.unwrap();
+        });
+    }
+
+    #[test]
+    fn new_manager_uses_jobs_only_after_both_discovery_signals() {
+        run_async(async {
+            let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let server = tokio::spawn(async move {
+                let (mut binary, _) = listener.accept().await.unwrap();
+                let capabilities = read_binary_request(&mut binary).await;
+                let capabilities_id = decode_frame(&capabilities.payload).unwrap().request_id;
+                write_binary_response(
+                    &mut binary,
+                    capabilities.token,
+                    &capabilities_response_with_features(
+                        capabilities_id,
+                        7 | FS_RPC_FEATURE_CONDITIONAL_MUTATIONS
+                            | job::FILESYSTEM_FEATURE_PERSISTENCE_JOBS,
+                    ),
+                )
+                .await;
+
+                let (mut json, _) = listener.accept().await.unwrap();
+                let _ = read_json_request(&mut json).await;
+                json.write_all(
+                    br#"{"schema":1,"ok":true,"paused":false,"serial_open":true,"message":null,"persistence_job_protocol_version":1}"#,
+                )
+                .await
+                .unwrap();
+                json.write_all(b"\n").await.unwrap();
+                json.shutdown().await.unwrap();
+
+                let job_capabilities = read_binary_request(&mut binary).await;
+                let job_capabilities_request =
+                    job::decode_request(&job_capabilities.payload).unwrap();
+                assert_eq!(job_capabilities_request.command, JobCommand::Capabilities);
+                write_binary_response(
+                    &mut binary,
+                    job_capabilities.token,
+                    &job_capabilities_response(job_capabilities_request.request_id),
+                )
+                .await;
+
+                let start = read_binary_request(&mut binary).await;
+                let start_request = job::decode_request(&start.payload).unwrap();
+                assert_eq!(start_request.command, JobCommand::Start);
+                let inner = decode_frame(start_request.inner_request).unwrap();
+                assert_eq!(inner.message_id, FsMessageId::MkdirRequest);
+                write_binary_response(
+                    &mut binary,
+                    start.token,
+                    &encoded_job_response(JobResponse {
+                        request_id: start_request.request_id,
+                        command: JobCommand::Start,
+                        state: JobState::Accepted,
+                        error: JobError::None,
+                        flags: 0,
+                        client_nonce: start_request.client_nonce,
+                        job_id: 77,
+                        retry_after_ms: 5,
+                        progress_per_mille: 0,
+                        body: &[],
+                    }),
+                )
+                .await;
+
+                let poll = read_binary_request(&mut binary).await;
+                let poll_request = job::decode_request(&poll.payload).unwrap();
+                assert_eq!(poll_request.command, JobCommand::Poll);
+                assert_eq!(poll_request.client_nonce, start_request.client_nonce);
+                assert_eq!(poll_request.job_id, 77);
+                let terminal = status_response(FsMessageId::MkdirResponse, inner.request_id);
+                write_binary_response(
+                    &mut binary,
+                    poll.token,
+                    &encoded_job_response(JobResponse {
+                        request_id: poll_request.request_id,
+                        command: JobCommand::Poll,
+                        state: JobState::Completed,
+                        error: JobError::None,
+                        flags: job::FLAG_TERMINAL_RETAINED,
+                        client_nonce: poll_request.client_nonce,
+                        job_id: poll_request.job_id,
+                        retry_after_ms: 0,
+                        progress_per_mille: 1_000,
+                        body: &terminal,
+                    }),
+                )
+                .await;
+            });
+
+            let bridge = BridgeBinaryClient::new(port);
+            let mut client = ControllerFsClient::new(bridge);
+            client.mkdir("projects/new").await.unwrap();
+            assert!(matches!(client.persistence_mode, PersistenceMode::Jobs(_)));
+            client.close().await;
+            server.await.unwrap();
+        });
+    }
+
+    #[test]
+    fn missing_bridge_supplier_field_selects_bounded_legacy() {
+        run_async(async {
+            let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let server = tokio::spawn(async move {
+                let (mut binary, _) = listener.accept().await.unwrap();
+                let capabilities = read_binary_request(&mut binary).await;
+                let capabilities_id = decode_frame(&capabilities.payload).unwrap().request_id;
+                write_binary_response(
+                    &mut binary,
+                    capabilities.token,
+                    &capabilities_response_with_features(
+                        capabilities_id,
+                        7 | job::FILESYSTEM_FEATURE_PERSISTENCE_JOBS,
+                    ),
+                )
+                .await;
+
+                let (mut json, _) = listener.accept().await.unwrap();
+                let _ = read_json_request(&mut json).await;
+                json.write_all(
+                    br#"{"schema":1,"ok":true,"paused":false,"serial_open":true,"message":null}"#,
+                )
+                .await
+                .unwrap();
+                json.write_all(b"\n").await.unwrap();
+                json.shutdown().await.unwrap();
+
+                let mkdir = read_binary_request(&mut binary).await;
+                let inner = decode_frame(&mkdir.payload).unwrap();
+                assert_eq!(inner.message_id, FsMessageId::MkdirRequest);
+                write_binary_response(
+                    &mut binary,
+                    mkdir.token,
+                    &status_response(FsMessageId::MkdirResponse, inner.request_id),
+                )
+                .await;
+            });
+
+            let bridge = BridgeBinaryClient::new(port);
+            let mut client = ControllerFsClient::new(bridge);
+            client.mkdir("projects/legacy").await.unwrap();
+            assert!(matches!(client.persistence_mode, PersistenceMode::Legacy));
+            client.close().await;
+            server.await.unwrap();
+        });
+    }
+
+    #[test]
+    fn advertised_job_train_with_invalid_capabilities_fails_closed() {
+        run_async(async {
+            let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let server = tokio::spawn(async move {
+                let (mut binary, _) = listener.accept().await.unwrap();
+                let capabilities = read_binary_request(&mut binary).await;
+                let capabilities_id = decode_frame(&capabilities.payload).unwrap().request_id;
+                write_binary_response(
+                    &mut binary,
+                    capabilities.token,
+                    &capabilities_response_with_features(
+                        capabilities_id,
+                        7 | job::FILESYSTEM_FEATURE_PERSISTENCE_JOBS,
+                    ),
+                )
+                .await;
+
+                let (mut json, _) = listener.accept().await.unwrap();
+                let _ = read_json_request(&mut json).await;
+                json.write_all(
+                    br#"{"schema":1,"ok":true,"paused":false,"serial_open":true,"message":null,"persistence_job_protocol_version":1}"#,
+                )
+                .await
+                .unwrap();
+                json.write_all(b"\n").await.unwrap();
+                json.shutdown().await.unwrap();
+
+                let job_capabilities = read_binary_request(&mut binary).await;
+                let request = job::decode_request(&job_capabilities.payload).unwrap();
+                let mut invalid = job_capabilities_response(request.request_id);
+                let body_offset = invalid.len() - 24;
+                invalid[body_offset] = 2;
+                write_binary_response(&mut binary, job_capabilities.token, &invalid).await;
+            });
+
+            let bridge = BridgeBinaryClient::new(port);
+            let mut client = ControllerFsClient::new(bridge);
+            let error = client.mkdir("projects/reject").await.unwrap_err();
+            assert_eq!(error.kind, "persistence_job_negotiation_failed");
+            assert!(matches!(client.persistence_mode, PersistenceMode::Unknown));
+            client.close().await;
+            server.await.unwrap();
+        });
+    }
+
+    #[test]
+    fn ambiguous_start_replays_the_exact_frame_once() {
+        run_async(async {
+            let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let server = tokio::spawn(async move {
+                let (mut first_stream, _) = listener.accept().await.unwrap();
+                let first = read_binary_request(&mut first_stream).await;
+                write_binary_error_response(&mut first_stream, first.token, 4, "timeout").await;
+
+                let (mut second_stream, _) = listener.accept().await.unwrap();
+                let second = read_binary_request(&mut second_stream).await;
+                assert_eq!(second.payload, first.payload);
+                let request = job::decode_request(&second.payload).unwrap();
+                write_binary_response(
+                    &mut second_stream,
+                    second.token,
+                    &encoded_job_response(JobResponse {
+                        request_id: request.request_id,
+                        command: JobCommand::Start,
+                        state: JobState::Accepted,
+                        error: JobError::None,
+                        flags: job::FLAG_DUPLICATE_START,
+                        client_nonce: request.client_nonce,
+                        job_id: 19,
+                        retry_after_ms: 5,
+                        progress_per_mille: 0,
+                        body: &[],
+                    }),
+                )
+                .await;
+            });
+
+            let inner = encode_mkdir_request(7, "projects/a").unwrap();
+            let mut client = ControllerFsClient::new(BridgeBinaryClient::new(port));
+            let (response, replayed) = client
+                .start_persistence_job(0x1020_3040, job::MAX_TOTAL_DEADLINE_MS, &inner)
+                .await
+                .unwrap();
+            assert!(replayed);
+            assert_eq!(response.job_id, 19);
+            assert_ne!(response.flags & job::FLAG_DUPLICATE_START, 0);
+            client.close().await;
+            server.await.unwrap();
+        });
+    }
+
+    #[test]
+    fn a_second_ambiguous_start_fails_without_unbounded_retry() {
+        run_async(async {
+            let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let server = tokio::spawn(async move {
+                let (mut first_stream, _) = listener.accept().await.unwrap();
+                let first = read_binary_request(&mut first_stream).await;
+                write_binary_error_response(&mut first_stream, first.token, 4, "timeout one").await;
+
+                let (mut second_stream, _) = listener.accept().await.unwrap();
+                let second = read_binary_request(&mut second_stream).await;
+                assert_eq!(second.payload, first.payload);
+                write_binary_error_response(&mut second_stream, second.token, 4, "timeout two")
+                    .await;
+            });
+
+            let inner = encode_mkdir_request(7, "projects/a").unwrap();
+            let mut client = ControllerFsClient::new(BridgeBinaryClient::new(port));
+            let error = client
+                .start_persistence_job(0x1020_3040, job::MAX_TOTAL_DEADLINE_MS, &inner)
+                .await
+                .unwrap_err();
+            assert_eq!(error.kind, "persistence_job_start_ambiguous");
+            client.close().await;
+            server.await.unwrap();
+        });
+    }
+
+    #[test]
+    fn unexpected_duplicate_start_rekeys_once_without_adopting_old_job() {
+        run_async(async {
+            let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let terminal = status_response(FsMessageId::MkdirResponse, 7);
+            let server = tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let first = read_binary_request(&mut stream).await;
+                let first_request = job::decode_request(&first.payload).unwrap();
+                write_binary_response(
+                    &mut stream,
+                    first.token,
+                    &encoded_job_response(JobResponse {
+                        request_id: first_request.request_id,
+                        command: JobCommand::Start,
+                        state: JobState::Accepted,
+                        error: JobError::None,
+                        flags: job::FLAG_DUPLICATE_START,
+                        client_nonce: first_request.client_nonce,
+                        job_id: 41,
+                        retry_after_ms: 5,
+                        progress_per_mille: 0,
+                        body: &[],
+                    }),
+                )
+                .await;
+
+                let second = read_binary_request(&mut stream).await;
+                let second_request = job::decode_request(&second.payload).unwrap();
+                assert_ne!(second_request.client_nonce, first_request.client_nonce);
+                assert_eq!(second_request.inner_request, first_request.inner_request);
+                write_binary_response(
+                    &mut stream,
+                    second.token,
+                    &encoded_job_response(JobResponse {
+                        request_id: second_request.request_id,
+                        command: JobCommand::Start,
+                        state: JobState::Completed,
+                        error: JobError::None,
+                        flags: 0,
+                        client_nonce: second_request.client_nonce,
+                        job_id: 42,
+                        retry_after_ms: 0,
+                        progress_per_mille: 1_000,
+                        body: &terminal,
+                    }),
+                )
+                .await;
+            });
+
+            let inner = encode_mkdir_request(7, "projects/a").unwrap();
+            let mut client = ControllerFsClient::new(BridgeBinaryClient::new(port));
+            let response = client
+                .run_persistence_job(JobCapabilities::V1, inner)
+                .await
+                .unwrap();
+            assert_eq!(
+                decode_status_response(&response, 7).unwrap().status,
+                FsStatus::Ok
+            );
+            client.close().await;
+            server.await.unwrap();
+        });
+    }
+
+    #[test]
+    fn a_second_nonce_collision_fails_without_a_third_start() {
+        run_async(async {
+            let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let server = tokio::spawn(async move {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let first = read_binary_request(&mut stream).await;
+                let first_request = job::decode_request(&first.payload).unwrap();
+                write_binary_response(
+                    &mut stream,
+                    first.token,
+                    &encoded_job_response(JobResponse {
+                        request_id: first_request.request_id,
+                        command: JobCommand::Start,
+                        state: JobState::Pending,
+                        error: JobError::None,
+                        flags: job::FLAG_DUPLICATE_START,
+                        client_nonce: first_request.client_nonce,
+                        job_id: 43,
+                        retry_after_ms: 5,
+                        progress_per_mille: 0,
+                        body: &[],
+                    }),
+                )
+                .await;
+
+                let second = read_binary_request(&mut stream).await;
+                let second_request = job::decode_request(&second.payload).unwrap();
+                assert_ne!(second_request.client_nonce, first_request.client_nonce);
+                write_binary_response(
+                    &mut stream,
+                    second.token,
+                    &encoded_job_response(JobResponse {
+                        request_id: second_request.request_id,
+                        command: JobCommand::Start,
+                        state: JobState::Rejected,
+                        error: JobError::Conflict,
+                        flags: 0,
+                        client_nonce: second_request.client_nonce,
+                        job_id: 44,
+                        retry_after_ms: 0,
+                        progress_per_mille: 0,
+                        body: &[],
+                    }),
+                )
+                .await;
+            });
+
+            let inner = encode_mkdir_request(7, "projects/a").unwrap();
+            let mut client = ControllerFsClient::new(BridgeBinaryClient::new(port));
+            let error = client
+                .run_persistence_job(JobCapabilities::V1, inner)
+                .await
+                .unwrap_err();
+            assert_eq!(error.kind, "persistence_job_nonce_collision");
+            client.close().await;
+            server.await.unwrap();
+        });
+    }
+
+    #[test]
+    fn admitted_poll_failure_sends_one_cancel_and_surfaces_terminal_cancel() {
+        run_async(async {
+            let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let server = tokio::spawn(async move {
+                let (mut first_stream, _) = listener.accept().await.unwrap();
+                let start = read_binary_request(&mut first_stream).await;
+                let start_request = job::decode_request(&start.payload).unwrap();
+                write_binary_response(
+                    &mut first_stream,
+                    start.token,
+                    &encoded_job_response(JobResponse {
+                        request_id: start_request.request_id,
+                        command: JobCommand::Start,
+                        state: JobState::Accepted,
+                        error: JobError::None,
+                        flags: 0,
+                        client_nonce: start_request.client_nonce,
+                        job_id: 51,
+                        retry_after_ms: 5,
+                        progress_per_mille: 0,
+                        body: &[],
+                    }),
+                )
+                .await;
+                let poll = read_binary_request(&mut first_stream).await;
+                write_binary_error_response(&mut first_stream, poll.token, 4, "poll timeout").await;
+
+                let (mut second_stream, _) = listener.accept().await.unwrap();
+                let cancel = read_binary_request(&mut second_stream).await;
+                let cancel_request = job::decode_request(&cancel.payload).unwrap();
+                assert_eq!(cancel_request.command, JobCommand::Cancel);
+                write_binary_response(
+                    &mut second_stream,
+                    cancel.token,
+                    &encoded_job_response(JobResponse {
+                        request_id: cancel_request.request_id,
+                        command: JobCommand::Cancel,
+                        state: JobState::Cancelled,
+                        error: JobError::Cancelled,
+                        flags: 0,
+                        client_nonce: cancel_request.client_nonce,
+                        job_id: cancel_request.job_id,
+                        retry_after_ms: 0,
+                        progress_per_mille: 0,
+                        body: &[],
+                    }),
+                )
+                .await;
+            });
+
+            let inner = encode_mkdir_request(7, "projects/a").unwrap();
+            let mut client = ControllerFsClient::new(BridgeBinaryClient::new(port));
+            let error = client
+                .run_persistence_job(JobCapabilities::V1, inner)
+                .await
+                .unwrap_err();
+            assert_eq!(error.kind, "persistence_job_cancelled");
+            client.close().await;
+            server.await.unwrap();
+        });
+    }
+
+    #[test]
+    fn mismatched_poll_identity_drops_the_stream_before_one_cancel() {
+        run_async(async {
+            let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let server = tokio::spawn(async move {
+                let (mut first_stream, _) = listener.accept().await.unwrap();
+                let start = read_binary_request(&mut first_stream).await;
+                let start_request = job::decode_request(&start.payload).unwrap();
+                write_binary_response(
+                    &mut first_stream,
+                    start.token,
+                    &encoded_job_response(JobResponse {
+                        request_id: start_request.request_id,
+                        command: JobCommand::Start,
+                        state: JobState::Accepted,
+                        error: JobError::None,
+                        flags: 0,
+                        client_nonce: start_request.client_nonce,
+                        job_id: 52,
+                        retry_after_ms: 5,
+                        progress_per_mille: 0,
+                        body: &[],
+                    }),
+                )
+                .await;
+
+                let poll = read_binary_request(&mut first_stream).await;
+                let poll_request = job::decode_request(&poll.payload).unwrap();
+                write_binary_response(
+                    &mut first_stream,
+                    poll.token,
+                    &encoded_job_response(JobResponse {
+                        request_id: poll_request.request_id,
+                        command: JobCommand::Poll,
+                        state: JobState::Pending,
+                        error: JobError::None,
+                        flags: 0,
+                        client_nonce: poll_request.client_nonce,
+                        job_id: poll_request.job_id + 1,
+                        retry_after_ms: 5,
+                        progress_per_mille: 0,
+                        body: &[],
+                    }),
+                )
+                .await;
+
+                let (mut second_stream, _) = listener.accept().await.unwrap();
+                let cancel = read_binary_request(&mut second_stream).await;
+                let cancel_request = job::decode_request(&cancel.payload).unwrap();
+                assert_eq!(cancel_request.command, JobCommand::Cancel);
+                assert_eq!(cancel_request.client_nonce, start_request.client_nonce);
+                assert_eq!(cancel_request.job_id, 52);
+                write_binary_response(
+                    &mut second_stream,
+                    cancel.token,
+                    &encoded_job_response(JobResponse {
+                        request_id: cancel_request.request_id,
+                        command: JobCommand::Cancel,
+                        state: JobState::Cancelled,
+                        error: JobError::Cancelled,
+                        flags: 0,
+                        client_nonce: cancel_request.client_nonce,
+                        job_id: cancel_request.job_id,
+                        retry_after_ms: 0,
+                        progress_per_mille: 0,
+                        body: &[],
+                    }),
+                )
+                .await;
+            });
+
+            let inner = encode_mkdir_request(7, "projects/a").unwrap();
+            let mut client = ControllerFsClient::new(BridgeBinaryClient::new(port));
+            let error = client
+                .run_persistence_job(JobCapabilities::V1, inner)
+                .await
+                .unwrap_err();
+            assert_eq!(error.kind, "persistence_job_cancelled");
+            client.close().await;
+            server.await.unwrap();
+        });
+    }
+
+    #[test]
+    fn cancel_too_late_continues_bounded_polling_to_exact_completion() {
+        run_async(async {
+            let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let terminal = status_response(FsMessageId::MkdirResponse, 7);
+            let server = tokio::spawn(async move {
+                let (mut first_stream, _) = listener.accept().await.unwrap();
+                let start = read_binary_request(&mut first_stream).await;
+                let start_request = job::decode_request(&start.payload).unwrap();
+                write_binary_response(
+                    &mut first_stream,
+                    start.token,
+                    &encoded_job_response(JobResponse {
+                        request_id: start_request.request_id,
+                        command: JobCommand::Start,
+                        state: JobState::Accepted,
+                        error: JobError::None,
+                        flags: 0,
+                        client_nonce: start_request.client_nonce,
+                        job_id: 61,
+                        retry_after_ms: 5,
+                        progress_per_mille: 0,
+                        body: &[],
+                    }),
+                )
+                .await;
+                let poll = read_binary_request(&mut first_stream).await;
+                write_binary_error_response(&mut first_stream, poll.token, 4, "poll timeout").await;
+
+                let (mut second_stream, _) = listener.accept().await.unwrap();
+                let cancel = read_binary_request(&mut second_stream).await;
+                let cancel_request = job::decode_request(&cancel.payload).unwrap();
+                write_binary_response(
+                    &mut second_stream,
+                    cancel.token,
+                    &encoded_job_response(JobResponse {
+                        request_id: cancel_request.request_id,
+                        command: JobCommand::Cancel,
+                        state: JobState::Pending,
+                        error: JobError::None,
+                        flags: job::FLAG_CANCEL_TOO_LATE,
+                        client_nonce: cancel_request.client_nonce,
+                        job_id: cancel_request.job_id,
+                        retry_after_ms: 5,
+                        progress_per_mille: 0,
+                        body: &[],
+                    }),
+                )
+                .await;
+
+                let final_poll = read_binary_request(&mut second_stream).await;
+                let final_request = job::decode_request(&final_poll.payload).unwrap();
+                assert_eq!(final_request.command, JobCommand::Poll);
+                write_binary_response(
+                    &mut second_stream,
+                    final_poll.token,
+                    &encoded_job_response(JobResponse {
+                        request_id: final_request.request_id,
+                        command: JobCommand::Poll,
+                        state: JobState::Completed,
+                        error: JobError::None,
+                        flags: job::FLAG_TERMINAL_RETAINED,
+                        client_nonce: final_request.client_nonce,
+                        job_id: final_request.job_id,
+                        retry_after_ms: 0,
+                        progress_per_mille: 1_000,
+                        body: &terminal,
+                    }),
+                )
+                .await;
+            });
+
+            let inner = encode_mkdir_request(7, "projects/a").unwrap();
+            let mut client = ControllerFsClient::new(BridgeBinaryClient::new(port));
+            let response = client
+                .run_persistence_job(JobCapabilities::V1, inner)
+                .await
+                .unwrap();
+            assert_eq!(
+                decode_status_response(&response, 7).unwrap().status,
+                FsStatus::Ok
+            );
+            client.close().await;
+            server.await.unwrap();
+        });
+    }
+
+    #[test]
+    fn every_job_error_has_a_stable_distinct_manager_kind() {
+        let errors = [
+            JobError::InvalidMessage,
+            JobError::InvalidArgument,
+            JobError::Unsupported,
+            JobError::NotFound,
+            JobError::BusyPlaying,
+            JobError::ResourceExhausted,
+            JobError::Conflict,
+            JobError::PreconditionFailed,
+            JobError::DeadlineExceeded,
+            JobError::MediaChanged,
+            JobError::StorageUnavailable,
+            JobError::StorageReadFailed,
+            JobError::StorageWriteFailed,
+            JobError::StorageCorrupt,
+            JobError::Cancelled,
+            JobError::Internal,
+            JobError::LegacyBusy,
+            JobError::LegacyStorageError,
+        ];
+        let mut kinds = std::collections::HashSet::new();
+        for error in errors {
+            let response = OwnedJobResponse {
+                state: if error == JobError::Cancelled {
+                    JobState::Cancelled
+                } else {
+                    JobState::Failed
+                },
+                error,
+                flags: if matches!(error, JobError::LegacyBusy | JobError::LegacyStorageError) {
+                    job::FLAG_LEGACY_MAPPED
+                } else {
+                    0
+                },
+                client_nonce: 1,
+                job_id: 2,
+                retry_after_ms: 0,
+                body: Vec::new(),
+            };
+            assert!(kinds.insert(terminal_job_error(&response).kind));
+        }
+        assert_eq!(kinds.len(), errors.len());
+        assert!(kinds.contains("precondition_failed"));
+        assert!(kinds.contains("persistence_legacy_busy"));
+        assert!(kinds.contains("persistence_legacy_storage_error"));
+    }
+
+    #[test]
+    fn client_nonce_sequence_never_emits_zero_or_wraps() {
+        assert_eq!(checked_nonce_successor(1).unwrap(), 2);
+        assert_eq!(
+            checked_nonce_successor(0).unwrap_err().kind,
+            "persistence_job_nonce_exhausted"
+        );
+        assert_eq!(
+            checked_nonce_successor(u32::MAX).unwrap_err().kind,
+            "persistence_job_nonce_exhausted"
+        );
+    }
+
     fn run_async(future: impl std::future::Future<Output = ()>) {
         tokio::runtime::Builder::new_current_thread()
             .enable_io()
@@ -2546,6 +4064,19 @@ mod tests {
     struct CapturedBinaryRequest {
         token: u16,
         payload: Vec<u8>,
+    }
+
+    async fn read_json_request(stream: &mut TcpStream) -> serde_json::Value {
+        let mut bytes = Vec::new();
+        loop {
+            let mut byte = [0u8; 1];
+            stream.read_exact(&mut byte).await.unwrap();
+            if byte[0] == b'\n' {
+                break;
+            }
+            bytes.push(byte[0]);
+        }
+        serde_json::from_slice(&bytes).unwrap()
     }
 
     async fn read_binary_request(stream: &mut TcpStream) -> CapturedBinaryRequest {
@@ -2574,14 +4105,62 @@ mod tests {
         stream.write_all(&response).await.unwrap();
     }
 
+    async fn write_binary_error_response(
+        stream: &mut TcpStream,
+        token: u16,
+        status: u8,
+        message: &str,
+    ) {
+        assert_ne!(status, BINARY_STATUS_OK);
+        let message = message.as_bytes();
+        let mut response = Vec::new();
+        response.extend_from_slice(BINARY_RESPONSE_MAGIC);
+        response.push(BINARY_CONTROL_VERSION);
+        response.push(status);
+        response.extend_from_slice(&token.to_le_bytes());
+        response.extend_from_slice(&0u32.to_le_bytes());
+        response.extend_from_slice(&(message.len() as u16).to_le_bytes());
+        response.extend_from_slice(&0u16.to_le_bytes());
+        response.extend_from_slice(message);
+        stream.write_all(&response).await.unwrap();
+    }
+
     fn capabilities_response(request_id: u16) -> Vec<u8> {
+        capabilities_response_with_features(request_id, 7 | FS_RPC_FEATURE_CONDITIONAL_MUTATIONS)
+    }
+
+    fn error_response(request_id: u16, status: FsStatus) -> Vec<u8> {
+        frame(FsMessageId::ErrorResponse, request_id, &[status as u8]).unwrap()
+    }
+
+    fn capabilities_response_with_features(request_id: u16, feature_flags: u32) -> Vec<u8> {
         let mut payload = vec![FsStatus::Ok as u8, FS_RPC_SCHEMA];
         payload.extend_from_slice(&(FS_RPC_MAX_CHUNK_SIZE as u16).to_le_bytes());
         payload.extend_from_slice(&32_512u16.to_le_bytes());
         payload.push(FS_RPC_MAX_LIST_ENTRIES);
         payload.extend_from_slice(&192u16.to_le_bytes());
-        payload.extend_from_slice(&(7u32 | FS_RPC_FEATURE_CONDITIONAL_MUTATIONS).to_le_bytes());
+        payload.extend_from_slice(&feature_flags.to_le_bytes());
         frame(FsMessageId::CapabilitiesResponse, request_id, &payload).unwrap()
+    }
+
+    fn job_capabilities_response(request_id: u16) -> Vec<u8> {
+        let body = JobCapabilities::V1.encode();
+        encoded_job_response(JobResponse {
+            request_id,
+            command: JobCommand::Capabilities,
+            state: JobState::None,
+            error: JobError::None,
+            flags: 0,
+            client_nonce: 0,
+            job_id: 0,
+            retry_after_ms: 0,
+            progress_per_mille: 0,
+            body: &body,
+        })
+    }
+
+    fn encoded_job_response(response: JobResponse<'_>) -> Vec<u8> {
+        job::encode_response(response).unwrap()
     }
 
     fn conditional_response(
