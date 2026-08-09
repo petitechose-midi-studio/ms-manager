@@ -2128,7 +2128,7 @@ dependencies = [
 
 [[package]]
 name = "ms-manager"
-version = "0.1.2-beta.3"
+version = "0.1.4-beta.1"
 dependencies = [
  "chrono",
  "fs2",
