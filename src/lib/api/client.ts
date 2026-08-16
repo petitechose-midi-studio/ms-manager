@@ -21,6 +21,7 @@ import type {
   ControllerFsRenameRequest,
   ControllerFsTransferResponse,
   DeviceStatus,
+  FirmwareTarget,
   InstallState,
   LastFlashed,
   LocalFsDeleteRequest,
@@ -43,6 +44,7 @@ import type {
   TabOrderResponse,
   TabOrderSetRequest,
   UxRecordingSessionInfo,
+  WorkspaceFirmwareProfile,
 } from "$lib/api/types";
 
 export function statusGet(): Promise<Status> {
@@ -216,8 +218,17 @@ export function installBridgeInstance(instanceId: string): Promise<InstallState>
   return invokeApi<InstallState>("install_bridge_instance", { instanceId });
 }
 
-export function flashBridgeInstance(instanceId: string): Promise<LastFlashed> {
-  return invokeApi<LastFlashed>("flash_bridge_instance", { instanceId });
+export function workspaceFirmwareProfiles(
+  target: FirmwareTarget,
+): Promise<WorkspaceFirmwareProfile[]> {
+  return invokeApi<WorkspaceFirmwareProfile[]>("workspace_firmware_profiles", { target });
+}
+
+export function flashBridgeInstance(
+  instanceId: string,
+  buildProfile?: string | null,
+): Promise<LastFlashed> {
+  return invokeApi<LastFlashed>("flash_bridge_instance", { instanceId, buildProfile });
 }
 
 export function payloadRootRelocate(newRoot: string): Promise<Status> {

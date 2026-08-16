@@ -16,6 +16,14 @@ export function formatTargetLabel(target: FirmwareTarget | string): string {
   return target;
 }
 
+export function formatBuildProfileLabel(profile: string): string {
+  if (profile === "dev") return "Normal";
+  if (profile === "dev_diagnostics") return "Diagnostics";
+  if (profile === "dev_ux_recorder") return "UX Recorder";
+  if (profile === "dev_ux_diagnostics") return "UX + Diagnostics";
+  return profile;
+}
+
 function formatRelativeAge(ms: number): string {
   const age = Math.max(0, Date.now() - ms);
   const minutes = Math.floor(age / 60000);
@@ -40,10 +48,11 @@ export function formatSelectedFirmwareLabel(options: {
   installedTag?: string | null;
   installedChannel?: Channel | null;
   installedReady?: boolean;
+  buildProfileLabel?: string | null;
 }): string {
   const target = formatTargetLabel(options.target);
   if (options.source === "workspace") {
-    return `${target} / Development`;
+    return `${target} / Development / ${options.buildProfileLabel ?? "Select profile"}`;
   }
 
   const channel = options.installedChannel ?? "stable";
@@ -66,7 +75,10 @@ export function formatLastFlashLabel(lastFlashed: LastFlashed | null | undefined
   const age = formatRelativeAge(lastFlashed.flashed_at_ms);
 
   if (lastFlashed.tag === "workspace") {
-    return `Last flash: Development · ${target} (${age})`;
+    const buildProfile = lastFlashed.build_profile
+      ? ` · ${formatBuildProfileLabel(lastFlashed.build_profile)}`
+      : "";
+    return `Last flash: Development · ${target}${buildProfile} (${age})`;
   }
 
   return `Last flash: Distribution · ${lastFlashed.tag} · ${formatChannelLabel(lastFlashed.channel)} · ${target} (${age})`;

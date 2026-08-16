@@ -55,6 +55,7 @@ pub fn run() {
             commands::controller_fs::controller_fs_push_file,
             commands::device::device_status_get,
             commands::flash::flash_bridge_instance,
+            commands::flash::workspace_firmware_profiles,
             commands::install::install_bridge_instance,
             commands::local_fs::local_fs_delete,
             commands::local_fs::local_fs_list,

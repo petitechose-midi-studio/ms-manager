@@ -12,6 +12,11 @@
   export let loadingTags = false;
   export let activeTagValue = "";
   export let activeTagOptions: { value: string; label: string }[] = [];
+  export let loadingBuildProfiles = false;
+  export let buildProfileOptions: { value: string; label: string }[] = [];
+  export let selectedBuildProfile = "";
+  export let developmentArtifactPath: string | null = null;
+  export let profileError: string | null = null;
   export let needsDownload = false;
   export let canFlash = false;
   export let flashing = false;
@@ -21,6 +26,7 @@
   export let flashNotice: { instanceId: string | null; level: "warn"; message: string } | null = null;
   export let onEnvironmentChange: (source: "installed" | "workspace") => void;
   export let onTargetChange: (target: "standalone" | "bitwig") => void;
+  export let onBuildProfileChange: (profile: string) => void;
   export let onOpenFolder: () => void;
   export let onChannelChange: (channel: Channel) => void;
   export let onTagChange: (tag: string | null) => void;
@@ -30,7 +36,9 @@
   $: step1Valid = instance.artifact_source === "installed" || instance.artifact_source === "workspace";
   $: step2Valid =
     (instance.target === "standalone" || instance.target === "bitwig") &&
-    !!(instance.artifact_location_path ?? artifactConfigPath ?? "").trim();
+    (instance.artifact_source === "workspace"
+      ? !!selectedBuildProfile
+      : !!(instance.artifact_location_path ?? artifactConfigPath ?? "").trim());
   $: step3Valid = canFlash;
 </script>
 
@@ -66,7 +74,7 @@
           {#if instance.artifact_source === "installed"}
             Choose the target and distribution release, then download it if needed.
           {:else}
-            Choose the target and confirm the development firmware artifact.
+            Choose the target and PlatformIO profile to build.
           {/if}
         </div>
       </div>
@@ -83,6 +91,15 @@
           {disabled}
           onChange={(value) => onTargetChange(value as "standalone" | "bitwig")}
         />
+        {#if instance.artifact_source === "workspace"}
+          <ChoiceDropdown
+            value={selectedBuildProfile}
+            placeholder={loadingBuildProfiles ? "Loading profiles..." : "Select build profile"}
+            options={buildProfileOptions}
+            disabled={disabled || loadingBuildProfiles || !buildProfileOptions.length}
+            onChange={onBuildProfileChange}
+          />
+        {/if}
         <button
           class="mini folderAction"
           type="button"
@@ -114,10 +131,14 @@
       {/if}
 
       <div class="subtlePath">
-        {formatEnvironmentLabel(instance.artifact_source)} path: {instance.artifact_location_path ?? artifactConfigPath ?? "-"}
+        {formatEnvironmentLabel(instance.artifact_source)} path: {instance.artifact_source === "workspace"
+          ? (developmentArtifactPath ?? "-")
+          : (instance.artifact_location_path ?? artifactConfigPath ?? "-")}
       </div>
 
-      {#if instance.artifact_message}
+      {#if profileError}
+        <div class="err">{profileError}</div>
+      {:else if instance.artifact_message && instance.artifact_source === "installed"}
         <div class="muted">{instance.artifact_message}</div>
       {/if}
     </div>
@@ -132,7 +153,9 @@
           {#if needsDownload}
             Download the selected release before flashing.
           {:else if canFlash}
-            Controller is ready for firmware update.
+            {instance.artifact_source === "workspace"
+              ? "The selected profile will be built, then flashed."
+              : "Controller is ready for firmware update."}
           {:else}
             Finish the firmware selection step before flashing.
           {/if}
@@ -147,7 +170,11 @@
 
       <div class="actions">
         <button class="btn primary" type="button" disabled={disabled || !canFlash} onclick={onFlash}>
-          {flashing ? "Flashing..." : "Flash Firmware"}
+          {#if flashing}
+            {instance.artifact_source === "workspace" ? "Building / Flashing..." : "Flashing..."}
+          {:else}
+            {instance.artifact_source === "workspace" ? "Build & Flash" : "Flash Firmware"}
+          {/if}
         </button>
       </div>
 

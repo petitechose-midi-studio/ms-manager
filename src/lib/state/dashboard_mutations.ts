@@ -103,7 +103,7 @@ export function createDashboardMutationController({
     }
   }
 
-  async function flashInstance(instanceId: string) {
+  async function flashInstance(instanceId: string, buildProfile?: string | null) {
     state.update((current) => ({
       ...current,
       flashing: true,
@@ -111,9 +111,13 @@ export function createDashboardMutationController({
       flashNotice: null,
     }));
     clearApiError(state);
-    activity.add("info", "flash", `flash start instance=${instanceId}`);
+    activity.add(
+      "info",
+      "flash",
+      `flash start instance=${instanceId}${buildProfile ? ` build=${buildProfile}` : ""}`,
+    );
     try {
-      const result = await flashBridgeInstance(instanceId);
+      const result = await flashBridgeInstance(instanceId, buildProfile);
       activity.add("ok", "flash", `flash done profile=${result.profile}`);
       await refreshStatus();
     } catch (error) {

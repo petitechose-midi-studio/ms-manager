@@ -11,6 +11,8 @@ pub struct LastFlashed {
     pub channel: Channel,
     pub tag: String,
     pub profile: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build_profile: Option<String>,
     /// Unix epoch milliseconds (best-effort).
     pub flashed_at_ms: u64,
 }
@@ -60,6 +62,7 @@ mod tests {
             channel: crate::Channel::Stable,
             tag: "v0.1.0".to_string(),
             profile: "default".to_string(),
+            build_profile: None,
             flashed_at_ms: 123,
         };
 
@@ -72,5 +75,15 @@ mod tests {
             flashed
         );
         assert!(state.last_flashed_for_instance("missing").is_none());
+    }
+
+    #[test]
+    fn reads_existing_flash_state_without_build_profile() {
+        let flashed: LastFlashed = serde_json::from_str(
+            r#"{"channel":"stable","tag":"workspace","profile":"default","flashed_at_ms":123}"#,
+        )
+        .unwrap();
+
+        assert_eq!(flashed.build_profile, None);
     }
 }

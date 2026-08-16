@@ -23,3 +23,4 @@ pub mod startup;
 pub mod tray;
 pub mod ux_recorder;
 pub mod workspace_artifacts;
+pub mod workspace_firmware;
