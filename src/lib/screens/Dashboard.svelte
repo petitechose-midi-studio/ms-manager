@@ -4,6 +4,7 @@
   import { LogicalSize } from "@tauri-apps/api/dpi";
   import {
     bridgeLogOpen,
+    buildWorkspaceFirmware,
     pathOpen,
     uxRecordingSessionRotate,
     uxRecordingsOpen,
@@ -51,6 +52,7 @@
   };
   let workspaceProfileError: string | null = null;
   let workspaceProfilesLoading = false;
+  let buildingFirmware = false;
   let activeWorkspaceTarget: FirmwareTarget | null = null;
   let workspaceProfileLoadKey = "";
   let workspaceProfileRequest = 0;
@@ -180,7 +182,8 @@
   $: appUpdateLabel = $dashState.appUpdate?.update
     ? `ms-manager ${$dashState.appUpdate.update.version}`
     : null;
-  $: activeBusy = $dashState.bridgeMutating || $dashState.installing || $dashState.flashing;
+  $: activeBusy =
+    $dashState.bridgeMutating || $dashState.installing || $dashState.flashing || buildingFirmware;
   $: activeWorkspaceTarget =
     activeInstance?.artifact_source === "workspace" ? activeInstance.target : null;
   $: {
@@ -204,7 +207,7 @@
     workspaceProfiles.find((profile) => profile.id === activeBuildProfileId) ?? null;
   $: activeBuildProfileOptions = workspaceProfiles.map((profile) => ({
     value: profile.id,
-    label: `${profile.label} · ${profile.id}`,
+    label: profile.id,
   }));
 
   async function loadWorkspaceProfiles(target: FirmwareTarget) {
@@ -240,6 +243,46 @@
   function setActiveBuildProfile(profile: string) {
     if (!activeWorkspaceTarget) return;
     selectedBuildProfiles = { ...selectedBuildProfiles, [activeWorkspaceTarget]: profile };
+    workspaceProfileError = null;
+  }
+
+  async function buildActiveFirmware() {
+    if (!activeWorkspaceTarget || !activeBuildProfileId) return;
+
+    const target = activeWorkspaceTarget;
+    const profileId = activeBuildProfileId;
+    buildingFirmware = true;
+    workspaceProfileError = null;
+    activity.add("info", "flash", `firmware build start target=${target} profile=${profileId}`);
+    try {
+      const profile = await buildWorkspaceFirmware(target, profileId);
+      if (activeWorkspaceTarget === target) {
+        workspaceProfiles = workspaceProfiles.map((candidate) =>
+          candidate.id === profile.id ? profile : candidate,
+        );
+      }
+      activity.add("ok", "flash", `firmware build complete target=${target} profile=${profileId}`);
+    } catch (error) {
+      const value = error as { message?: string };
+      const message = typeof value?.message === "string" ? value.message : String(error);
+      if (activeWorkspaceTarget === target) {
+        workspaceProfileError = message;
+      }
+      activity.add("error", "flash", `firmware build failed: ${message}`, error);
+    } finally {
+      buildingFirmware = false;
+    }
+  }
+
+  async function flashActiveFirmware() {
+    if (!activeInstance) return;
+
+    const target = activeInstance.artifact_source === "workspace" ? activeInstance.target : null;
+    const profileId = target ? activeBuildProfile?.id : null;
+    await dash.flashInstance(activeInstance.instance_id, profileId);
+    if (target && activeWorkspaceTarget === target) {
+      await loadWorkspaceProfiles(target);
+    }
   }
 
   async function copyActivity(entries: ActivityEntry[], filter: ActivityFilter) {
@@ -417,7 +460,6 @@
     (
       activeInstance.artifact_source === "workspace"
         ? !!activeBuildProfile &&
-          !workspaceProfileError &&
           !workspaceProfilesLoading
         : installedSelectionReady
     );
@@ -433,7 +475,7 @@
         installedTag: $dashState.installed?.tag ?? null,
         installedChannel: activeInstance.installed_channel,
         installedReady: installedSelectionReady,
-        buildProfileLabel: activeBuildProfile?.label ?? null,
+        buildProfile: activeBuildProfile?.id ?? null,
       })
     : "-";
   $: activeErrorMessage = $dashState.error?.message ?? null;
@@ -538,6 +580,8 @@
               buildProfileOptions={activeBuildProfileOptions}
               selectedBuildProfile={activeBuildProfileId}
               developmentArtifactPath={activeBuildProfile?.artifact_path ?? null}
+              artifactReady={activeBuildProfile?.artifact_ready ?? false}
+              building={buildingFirmware}
               profileError={workspaceProfileError}
               needsDownload={needsDownloadActiveInstance}
               canFlash={canFlashActiveInstance}
@@ -549,15 +593,17 @@
               onEnvironmentChange={setActiveInstanceEnvironment}
               onTargetChange={setActiveInstanceTarget}
               onBuildProfileChange={setActiveBuildProfile}
-              onOpenFolder={() => openSourcePath(activeInstance.artifact_location_path)}
+              onBuild={buildActiveFirmware}
+              onOpenFolder={() =>
+                openSourcePath(
+                  activeInstance.artifact_source === "workspace"
+                    ? activeBuildProfile?.artifact_path
+                    : activeInstance.artifact_location_path,
+                )}
               onChannelChange={setActiveInstanceChannel}
               onTagChange={setActiveInstanceTag}
               onDownload={() => dash.installForBridgeInstance(activeInstance.instance_id)}
-              onFlash={() =>
-                dash.flashInstance(
-                  activeInstance.instance_id,
-                  activeInstance.artifact_source === "workspace" ? activeBuildProfile?.id : null,
-                )}
+              onFlash={flashActiveFirmware}
             />
           {:else}
             <InstanceStorageCard instance={activeInstance} disabled={activeBusy || !activeInstance.serial_open} />

@@ -28,8 +28,8 @@ export type LastFlashed = {
 
 export type WorkspaceFirmwareProfile = {
   id: string;
-  label: string;
   artifact_path: string;
+  artifact_ready: boolean;
 };
 
 export type DeviceStatus = {

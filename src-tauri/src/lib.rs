@@ -54,6 +54,7 @@ pub fn run() {
             commands::controller_fs::controller_fs_pull_file,
             commands::controller_fs::controller_fs_push_file,
             commands::device::device_status_get,
+            commands::flash::build_workspace_firmware,
             commands::flash::flash_bridge_instance,
             commands::flash::workspace_firmware_profiles,
             commands::install::install_bridge_instance,

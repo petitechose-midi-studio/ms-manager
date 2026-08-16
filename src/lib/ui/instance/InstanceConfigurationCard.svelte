@@ -16,6 +16,8 @@
   export let buildProfileOptions: { value: string; label: string }[] = [];
   export let selectedBuildProfile = "";
   export let developmentArtifactPath: string | null = null;
+  export let artifactReady = false;
+  export let building = false;
   export let profileError: string | null = null;
   export let needsDownload = false;
   export let canFlash = false;
@@ -27,6 +29,7 @@
   export let onEnvironmentChange: (source: "installed" | "workspace") => void;
   export let onTargetChange: (target: "standalone" | "bitwig") => void;
   export let onBuildProfileChange: (profile: string) => void;
+  export let onBuild: () => void;
   export let onOpenFolder: () => void;
   export let onChannelChange: (channel: Channel) => void;
   export let onTagChange: (tag: string | null) => void;
@@ -74,7 +77,7 @@
           {#if instance.artifact_source === "installed"}
             Choose the target and distribution release, then download it if needed.
           {:else}
-            Choose the target and PlatformIO profile to build.
+            Choose the target and PlatformIO profile, then build when the sources change.
           {/if}
         </div>
       </div>
@@ -99,11 +102,21 @@
             disabled={disabled || loadingBuildProfiles || !buildProfileOptions.length}
             onChange={onBuildProfileChange}
           />
+          <button
+            class="mini"
+            type="button"
+            disabled={disabled || !selectedBuildProfile}
+            onclick={onBuild}
+          >
+            {building ? "Building..." : "Build Firmware"}
+          </button>
         {/if}
         <button
           class="mini folderAction"
           type="button"
-          disabled={!instance.artifact_location_path}
+          disabled={instance.artifact_source === "workspace"
+            ? !artifactReady || !developmentArtifactPath
+            : !instance.artifact_location_path}
           onclick={onOpenFolder}
         >
           <span class="btnIcon" aria-hidden="true"><FolderIcon size={13} /></span>
@@ -154,7 +167,9 @@
             Download the selected release before flashing.
           {:else if canFlash}
             {instance.artifact_source === "workspace"
-              ? "The selected profile will be built, then flashed."
+              ? artifactReady
+                ? "The selected firmware is ready to flash."
+                : "No firmware exists yet; Flash will build it first."
               : "Controller is ready for firmware update."}
           {:else}
             Finish the firmware selection step before flashing.
@@ -171,9 +186,11 @@
       <div class="actions">
         <button class="btn primary" type="button" disabled={disabled || !canFlash} onclick={onFlash}>
           {#if flashing}
-            {instance.artifact_source === "workspace" ? "Building / Flashing..." : "Flashing..."}
+            {instance.artifact_source === "workspace" && !artifactReady
+              ? "Building / Flashing..."
+              : "Flashing..."}
           {:else}
-            {instance.artifact_source === "workspace" ? "Build & Flash" : "Flash Firmware"}
+            Flash Firmware
           {/if}
         </button>
       </div>

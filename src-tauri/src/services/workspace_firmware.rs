@@ -9,8 +9,8 @@ use crate::services::{artifact_paths, process};
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct WorkspaceFirmwareProfile {
     pub id: String,
-    pub label: String,
     pub artifact_path: PathBuf,
+    pub artifact_ready: bool,
 }
 
 pub async fn profiles(target: FirmwareTarget) -> ApiResult<Vec<WorkspaceFirmwareProfile>> {
@@ -36,17 +36,7 @@ pub async fn build(
     target: FirmwareTarget,
     profile_id: &str,
 ) -> ApiResult<WorkspaceFirmwareProfile> {
-    let profile_id = profile_id.trim();
-    let profile = profiles(target)
-        .await?
-        .into_iter()
-        .find(|profile| profile.id == profile_id)
-        .ok_or_else(|| {
-            ApiError::new(
-                "firmware_profile_invalid",
-                format!("development firmware profile is not available: {profile_id}"),
-            )
-        })?;
+    let mut profile = profile(target, profile_id).await?;
 
     let root = workspace_root()?;
     let output = run_ms(
@@ -64,7 +54,7 @@ pub async fn build(
     if !output.status.success() {
         return Err(command_error(
             "firmware_build_failed",
-            &format!("Development firmware build failed for {}.", profile.label),
+            &format!("Development firmware build failed for {}.", profile.id),
             &output,
         ));
     }
@@ -79,7 +69,25 @@ pub async fn build(
         ));
     }
 
+    profile.artifact_ready = true;
     Ok(profile)
+}
+
+pub async fn profile(
+    target: FirmwareTarget,
+    profile_id: &str,
+) -> ApiResult<WorkspaceFirmwareProfile> {
+    let profile_id = profile_id.trim();
+    profiles(target)
+        .await?
+        .into_iter()
+        .find(|profile| profile.id == profile_id)
+        .ok_or_else(|| {
+            ApiError::new(
+                "firmware_profile_invalid",
+                format!("development firmware profile is not available: {profile_id}"),
+            )
+        })
 }
 
 fn app_name(target: FirmwareTarget) -> &'static str {
@@ -139,7 +147,7 @@ fn command_error(code: &str, message: &str, output: &std::process::Output) -> Ap
         "stderr": String::from_utf8_lossy(&output.stderr),
         "suggested_actions": [
             "Open the activity details to inspect the build error.",
-            "Fix the reported source or toolchain error, then retry Build & Flash."
+            "Fix the reported source or toolchain error, then retry the build."
         ]
     }))
 }

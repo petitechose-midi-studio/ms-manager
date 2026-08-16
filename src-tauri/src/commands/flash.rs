@@ -13,6 +13,14 @@ pub async fn workspace_firmware_profiles(
 }
 
 #[tauri::command]
+pub async fn build_workspace_firmware(
+    target: ms_manager_core::FirmwareTarget,
+    build_profile: String,
+) -> ApiResult<workspace_firmware::WorkspaceFirmwareProfile> {
+    workspace_firmware::build(target, &build_profile).await
+}
+
+#[tauri::command]
 pub async fn flash_bridge_instance(
     instance_id: String,
     build_profile: Option<String>,
@@ -42,26 +50,29 @@ pub async fn flash_bridge_instance(
             .ok_or_else(|| {
                 ApiError::new(
                     "firmware_profile_required",
-                    "Select a development firmware profile before building.",
+                    "Select a development firmware profile before flashing.",
                 )
             })?;
-        flash::emit_flash_message(
-            &app,
-            FlashMessageLevel::Info,
-            format!("Building development firmware: {profile_id}..."),
-        );
-        let profile = match workspace_firmware::build(binding.target, profile_id).await {
-            Ok(profile) => profile,
-            Err(error) => {
-                flash::emit_flash_done(&app, false);
-                return Err(error);
-            }
-        };
-        flash::emit_flash_message(
-            &app,
-            FlashMessageLevel::Info,
-            format!("Build complete: {}", profile.label),
-        );
+        let mut profile = workspace_firmware::profile(binding.target, profile_id).await?;
+        if !profile.artifact_ready {
+            flash::emit_flash_message(
+                &app,
+                FlashMessageLevel::Info,
+                format!("Firmware artifact missing; building {profile_id}..."),
+            );
+            profile = match workspace_firmware::build(binding.target, profile_id).await {
+                Ok(profile) => profile,
+                Err(error) => {
+                    flash::emit_flash_done(&app, false);
+                    return Err(error);
+                }
+            };
+            flash::emit_flash_message(
+                &app,
+                FlashMessageLevel::Info,
+                format!("Build complete: {}", profile.id),
+            );
+        }
         Some((profile.artifact_path, profile.id))
     } else {
         None

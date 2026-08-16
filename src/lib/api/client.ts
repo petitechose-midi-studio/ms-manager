@@ -224,6 +224,16 @@ export function workspaceFirmwareProfiles(
   return invokeApi<WorkspaceFirmwareProfile[]>("workspace_firmware_profiles", { target });
 }
 
+export function buildWorkspaceFirmware(
+  target: FirmwareTarget,
+  buildProfile: string,
+): Promise<WorkspaceFirmwareProfile> {
+  return invokeApi<WorkspaceFirmwareProfile>("build_workspace_firmware", {
+    target,
+    buildProfile,
+  });
+}
+
 export function flashBridgeInstance(
   instanceId: string,
   buildProfile?: string | null,
