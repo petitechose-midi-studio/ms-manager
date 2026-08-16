@@ -677,7 +677,7 @@
 <style>
   .page {
     height: 100vh;
-    padding: var(--space-5);
+    padding: var(--space-4);
     display: grid;
     grid-template-rows: auto 1fr auto;
     gap: var(--space-4);
@@ -698,10 +698,10 @@
   }
 
   .panelBody {
-    padding: var(--space-5);
+    padding: var(--space-4);
     overflow: auto;
     display: grid;
-    gap: var(--space-5);
+    gap: var(--space-4);
     min-height: 0;
   }
 

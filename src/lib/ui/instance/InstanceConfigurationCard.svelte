@@ -73,6 +73,10 @@
       : "Not built";
   $: artifactBuildTitle = artifactBuiltAtMs ? formatExactTimestamp(artifactBuiltAtMs) : artifactBuildLabel;
   $: artifactFolderReady = instance.artifact_source === "workspace" ? artifactReady : !!artifactPath;
+  $: flashReady =
+    canFlash &&
+    !needsDownload &&
+    (instance.artifact_source !== "workspace" || artifactReady);
   $: flashStatusLabel = needsDownload
     ? "Download required"
     : canFlash
@@ -214,9 +218,18 @@
     {:else if instance.artifact_message && instance.artifact_source === "installed"}
       <div class="message neutral">{instance.artifact_message}</div>
     {/if}
+  </section>
 
+  <section class="flashStep">
+    <div class="stepHeading">
+      <div class="stepIndex" class:valid={flashReady}>3</div>
+      <div>
+        <div class="stepTitle">Flash Controller</div>
+        <div class="stepDetail">Review and deploy firmware</div>
+      </div>
+    </div>
     <div class="flashRow">
-      <div class="flashSummary" data-ready={canFlash && !needsDownload}>
+      <div class="flashSummary" data-ready={flashReady}>
         <span class="statusDot" aria-hidden="true"></span>
         <div>
           <div class="flashStatus">{flashStatusLabel}</div>
@@ -261,11 +274,12 @@
 <style>
   .workflow {
     display: grid;
-    gap: var(--space-4);
+    gap: var(--space-3);
   }
 
   .environmentStep,
-  .firmwareStep {
+  .firmwareStep,
+  .flashStep {
     border: 1px solid var(--border);
     border-radius: var(--radius-card);
     background: color-mix(in srgb, var(--panel) 72%, transparent);
@@ -280,10 +294,11 @@
     gap: var(--space-4);
   }
 
-  .firmwareStep {
-    padding: var(--space-4);
+  .firmwareStep,
+  .flashStep {
+    padding: var(--space-3) var(--space-4);
     display: grid;
-    gap: var(--space-4);
+    gap: var(--space-3);
   }
 
   .stepHeading {
