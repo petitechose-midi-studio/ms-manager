@@ -1,4 +1,5 @@
 <script lang="ts">
+  import appMark from "../../../src-tauri/icons/icon.png";
   import type { DeviceStatus, MidiInventoryStatus, Platform } from "$lib/api/types";
   import ControllerStatus from "$lib/ui/ControllerStatus.svelte";
   import MidiInventoryOverviewBadge from "$lib/ui/MidiInventoryOverviewBadge.svelte";
@@ -15,7 +16,10 @@
 
 <header class="bar">
   <div class="title">
-    <span class="app">MIDI Studio Manager</span>
+    <span class="brand">
+      <img class="appMark" src={appMark} alt="" />
+      <span class="app">MIDI Studio Manager</span>
+    </span>
     <MidiInventoryOverviewBadge
       inventory={midiInventory}
       loading={loadingMidiInventory}
@@ -64,6 +68,20 @@
     color: var(--value);
   }
 
+  .brand {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    white-space: nowrap;
+  }
+
+  .appMark {
+    width: 24px;
+    height: 24px;
+    display: block;
+    object-fit: contain;
+  }
+
   .title {
     display: inline-flex;
     align-items: center;
@@ -82,8 +100,8 @@
   .badge {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
-    padding: 5px 8px;
+    gap: var(--space-2);
+    padding: var(--pill-padding-y) var(--pill-padding-x);
     border-radius: 999px;
     border: 1px solid var(--border);
     background: rgba(0, 0, 0, 0.06);

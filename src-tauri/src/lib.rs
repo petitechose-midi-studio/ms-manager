@@ -63,6 +63,7 @@ pub fn run() {
             commands::local_fs::local_fs_mkdir,
             commands::local_fs::local_fs_rename,
             commands::midi::midi_inventory_get,
+            commands::payload::file_copy_to_clipboard,
             commands::payload::path_open,
             commands::payload::payload_root_relocate,
             commands::payload::url_open,

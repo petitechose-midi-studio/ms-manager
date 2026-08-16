@@ -28,8 +28,10 @@ export type LastFlashed = {
 
 export type WorkspaceFirmwareProfile = {
   id: string;
+  source_path: string;
   artifact_path: string;
   artifact_ready: boolean;
+  artifact_built_at_ms?: number | null;
   source_dirty: boolean;
 };
 

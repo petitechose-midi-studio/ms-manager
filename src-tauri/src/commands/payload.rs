@@ -18,6 +18,47 @@ pub fn path_open(path: String) -> ApiResult<()> {
 }
 
 #[tauri::command]
+pub fn file_copy_to_clipboard(path: String) -> ApiResult<()> {
+    let path = std::path::PathBuf::from(normalize_path_string(path.trim()));
+    if !path.is_file() {
+        return Err(ApiError::new(
+            "file_invalid",
+            format!("file does not exist: {}", path.display()),
+        ));
+    }
+
+    copy_file_to_clipboard(&path)
+}
+
+#[cfg(windows)]
+fn copy_file_to_clipboard(path: &std::path::Path) -> ApiResult<()> {
+    use clipboard_win::{formats::FileList, Clipboard, Setter};
+
+    let path = path.display().to_string();
+    let _clipboard = Clipboard::new_attempts(10).map_err(|error| {
+        ApiError::new(
+            "clipboard_unavailable",
+            format!("unable to open the clipboard: {error}"),
+        )
+    })?;
+    FileList.write_clipboard(&[path]).map_err(|error| {
+        ApiError::new(
+            "clipboard_write_failed",
+            format!("unable to copy the file: {error}"),
+        )
+    })?;
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn copy_file_to_clipboard(_path: &std::path::Path) -> ApiResult<()> {
+    Err(ApiError::new(
+        "clipboard_file_copy_unsupported",
+        "copying files to the clipboard is currently supported on Windows only",
+    ))
+}
+
+#[tauri::command]
 pub fn url_open(url: String) -> ApiResult<()> {
     let url = url.trim().to_string();
     if url.is_empty() {

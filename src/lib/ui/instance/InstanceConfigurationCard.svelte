@@ -1,10 +1,16 @@
 <script lang="ts">
   import type { BridgeInstanceStatus, Channel } from "$lib/api/types";
-  import ChoiceDropdown from "$lib/ui/ChoiceDropdown.svelte";
   import ChannelDropdown from "$lib/ui/ChannelDropdown.svelte";
+  import ChoiceDropdown from "$lib/ui/ChoiceDropdown.svelte";
   import TagDropdown from "$lib/ui/TagDropdown.svelte";
+  import CopyIcon from "$lib/ui/icons/CopyIcon.svelte";
   import FolderIcon from "$lib/ui/icons/FolderIcon.svelte";
-  import { formatEnvironmentLabel } from "$lib/ui/instance/firmwarePresentation";
+  import InfoIcon from "$lib/ui/icons/InfoIcon.svelte";
+  import RepositoryIcon from "$lib/ui/icons/RepositoryIcon.svelte";
+  import {
+    formatExactTimestamp,
+    formatRelativeAge,
+  } from "$lib/ui/instance/firmwarePresentation";
 
   export let instance: BridgeInstanceStatus;
   export let artifactConfigPath: string | null = null;
@@ -15,9 +21,12 @@
   export let loadingBuildProfiles = false;
   export let buildProfileOptions: { value: string; label: string }[] = [];
   export let selectedBuildProfile = "";
+  export let developmentSourcePath: string | null = null;
   export let developmentArtifactPath: string | null = null;
   export let artifactReady = false;
+  export let artifactBuiltAtMs: number | null = null;
   export let sourceDirty = false;
+  export let canCopyArtifact = false;
   export let building = false;
   export let profileError: string | null = null;
   export let needsDownload = false;
@@ -31,226 +40,257 @@
   export let onTargetChange: (target: "standalone" | "bitwig") => void;
   export let onBuildProfileChange: (profile: string) => void;
   export let onBuild: () => void;
-  export let onOpenFolder: () => void;
+  export let onOpenSourceFolder: () => void;
+  export let onOpenArtifactFolder: () => void;
+  export let onCopyArtifact: () => void;
   export let onChannelChange: (channel: Channel) => void;
   export let onTagChange: (tag: string | null) => void;
   export let onDownload: () => void;
   export let onFlash: () => void;
 
-  $: step1Valid = instance.artifact_source === "installed" || instance.artifact_source === "workspace";
-  $: step2Valid =
+  function compactPath(path: string | null): string {
+    if (!path) return "No artifact";
+    const separator = path.includes("\\") ? "\\" : "/";
+    const parts = path.split(/[\\/]/).filter(Boolean);
+    if (parts.length <= 4) return path;
+    return `…${separator}${parts.slice(-4).join(separator)}`;
+  }
+
+  $: firmwareValid =
     (instance.target === "standalone" || instance.target === "bitwig") &&
     (instance.artifact_source === "workspace"
       ? !!selectedBuildProfile
       : !!(instance.artifact_location_path ?? artifactConfigPath ?? "").trim());
-  $: step3Valid = canFlash;
+  $: artifactPath =
+    instance.artifact_source === "workspace"
+      ? developmentArtifactPath
+      : (instance.artifact_location_path ?? artifactConfigPath);
+  $: artifactPathLabel = compactPath(artifactPath);
+  $: artifactBuildLabel = artifactBuiltAtMs
+    ? `Built ${formatRelativeAge(artifactBuiltAtMs)}`
+    : artifactReady
+      ? "Build time unknown"
+      : "Not built";
+  $: artifactBuildTitle = artifactBuiltAtMs ? formatExactTimestamp(artifactBuiltAtMs) : artifactBuildLabel;
+  $: artifactFolderReady = instance.artifact_source === "workspace" ? artifactReady : !!artifactPath;
+  $: flashStatusLabel = needsDownload
+    ? "Download required"
+    : canFlash
+      ? instance.artifact_source === "workspace" && !artifactReady
+        ? "Build required"
+        : "Ready to flash"
+      : "Firmware selection incomplete";
 </script>
 
-<div class="card">
-  <section class="step">
-    <div class="stepHeader">
-      <div class="stepIndex" class:valid={step1Valid}>1</div>
-      <div class="stepTitleWrap">
-        <div class="stepTitle">Select Environment</div>
-        <div class="stepDetail">Choose the firmware environment.</div>
+<div class="workflow">
+  <section class="environmentStep">
+    <div class="stepHeading">
+      <div class="stepIndex valid">1</div>
+      <div>
+        <div class="stepTitle">Environment</div>
+        <div class="stepDetail">Firmware source</div>
       </div>
     </div>
-    <div class="stepBody">
+    <ChoiceDropdown
+      value={instance.artifact_source}
+      placeholder="Select"
+      options={[
+        { value: "workspace", label: "Development" },
+        { value: "installed", label: "Distribution" },
+      ]}
+      {disabled}
+      onChange={(value) => onEnvironmentChange(value as "installed" | "workspace")}
+    />
+  </section>
+
+  <section class="firmwareStep">
+    <div class="stepHeading">
+      <div class="stepIndex" class:valid={firmwareValid}>2</div>
+      <div>
+        <div class="stepTitle">Firmware</div>
+        <div class="stepDetail">
+          {instance.artifact_source === "workspace" ? "Build profile and artifact" : "Target and release"}
+        </div>
+      </div>
+    </div>
+
+    <div class="controls">
       <ChoiceDropdown
-        value={instance.artifact_source}
+        label="Target"
+        value={instance.target}
         placeholder="Select"
         options={[
-          { value: "workspace", label: "Development" },
-          { value: "installed", label: "Distribution" },
+          { value: "standalone", label: "Standalone", icon: "controller" },
+          { value: "bitwig", label: "Bitwig", icon: "bitwig" },
         ]}
         {disabled}
-        onChange={(value) => onEnvironmentChange(value as "installed" | "workspace")}
+        onChange={(value) => onTargetChange(value as "standalone" | "bitwig")}
       />
-    </div>
-  </section>
 
-  <section class="step">
-    <div class="stepHeader">
-      <div class="stepIndex" class:valid={step2Valid}>2</div>
-      <div class="stepTitleWrap">
-        <div class="stepTitle">Select Firmware</div>
-        <div class="stepDetail">
-          {#if instance.artifact_source === "installed"}
-            Choose the target and distribution release, then download it if needed.
-          {:else}
-            Choose the target and PlatformIO profile, then build when the sources change.
-          {/if}
-        </div>
-      </div>
-    </div>
-    <div class="stepBody">
-      <div class="row">
+      {#if instance.artifact_source === "workspace"}
         <ChoiceDropdown
-          value={instance.target}
-          placeholder="Select"
-          options={[
-            { value: "standalone", label: "Standalone", icon: "controller" },
-            { value: "bitwig", label: "Bitwig", icon: "bitwig" },
-          ]}
-          {disabled}
-          onChange={(value) => onTargetChange(value as "standalone" | "bitwig")}
+          label="Profile"
+          value={selectedBuildProfile}
+          placeholder={loadingBuildProfiles ? "Loading profiles..." : "Select profile"}
+          options={buildProfileOptions}
+          disabled={disabled || loadingBuildProfiles || !buildProfileOptions.length}
+          onChange={onBuildProfileChange}
         />
-        {#if instance.artifact_source === "workspace"}
-          <ChoiceDropdown
-            value={selectedBuildProfile}
-            placeholder={loadingBuildProfiles ? "Loading profiles..." : "Select build profile"}
-            options={buildProfileOptions}
-            disabled={disabled || loadingBuildProfiles || !buildProfileOptions.length}
-            onChange={onBuildProfileChange}
-          />
-          <button
-            class="mini"
-            type="button"
-            disabled={disabled || !selectedBuildProfile}
-            onclick={onBuild}
-          >
-            {building ? "Building..." : "Build Firmware"}
-          </button>
-        {/if}
         <button
-          class="mini folderAction"
+          class="textButton controlBottom"
           type="button"
-          disabled={instance.artifact_source === "workspace"
-            ? !artifactReady || !developmentArtifactPath
-            : !instance.artifact_location_path}
-          onclick={onOpenFolder}
+          disabled={disabled || building || !selectedBuildProfile}
+          onclick={onBuild}
         >
-          <span class="btnIcon" aria-hidden="true"><FolderIcon size={13} /></span>
-          <span>Open Folder</span>
+          {building ? "Building..." : "Build"}
         </button>
-      </div>
-
-      {#if instance.artifact_source === "installed"}
-        <div class="row">
-          <ChannelDropdown
-            value={instance.installed_channel ?? "stable"}
-            {disabled}
-            onChange={onChannelChange}
-          />
-          <TagDropdown
-            value={activeTagValue}
-            options={activeTagOptions}
-            disabled={loadingTags || disabled}
-            onChange={(value) => onTagChange(value === "" ? null : value)}
-          />
-          <button class="mini" type="button" disabled={disabled || !needsDownload} onclick={onDownload}>
-            {needsDownload ? "Download" : "Downloaded"}
+        <div class="sourceActions controlBottom">
+          <button
+            class="iconButton"
+            type="button"
+            title="Open development source repository"
+            aria-label="Open development source repository"
+            disabled={!developmentSourcePath}
+            onclick={onOpenSourceFolder}
+          >
+            <RepositoryIcon size={16} />
           </button>
-        </div>
-      {/if}
-
-      <div class="subtlePath">
-        {formatEnvironmentLabel(instance.artifact_source)} path: {instance.artifact_source === "workspace"
-          ? (developmentArtifactPath ?? "-")
-          : (instance.artifact_location_path ?? artifactConfigPath ?? "-")}
-      </div>
-
-      {#if instance.artifact_source === "workspace" && sourceDirty}
-        <div class="warn">Uncommitted source changes</div>
-      {/if}
-
-      {#if profileError}
-        <div class="err">{profileError}</div>
-      {:else if instance.artifact_message && instance.artifact_source === "installed"}
-        <div class="muted">{instance.artifact_message}</div>
-      {/if}
-    </div>
-  </section>
-
-  <section class="step">
-    <div class="stepHeader">
-      <div class="stepIndex" class:valid={step3Valid}>3</div>
-      <div class="stepTitleWrap">
-        <div class="stepTitle">Flash Controller</div>
-        <div class="stepDetail">
-          {#if needsDownload}
-            Download the selected release before flashing.
-          {:else if canFlash}
-            {instance.artifact_source === "workspace"
-              ? artifactReady
-                ? "The selected firmware is ready to flash."
-                : "No firmware exists yet; Flash will build it first."
-              : "Controller is ready for firmware update."}
-          {:else}
-            Finish the firmware selection step before flashing.
+          {#if sourceDirty}
+            <span class="dirtyBadge" title="The development repository contains uncommitted changes">
+              <InfoIcon size={13} />
+              <span>Uncommitted changes</span>
+            </span>
           {/if}
         </div>
-      </div>
-    </div>
-    <div class="stepBody">
-      <div class="field">
-        <div class="label">Selected Firmware</div>
-        <div class="value">{selectedFirmware}</div>
-      </div>
-
-      <div class="actions">
-        <button class="btn primary" type="button" disabled={disabled || !canFlash} onclick={onFlash}>
-          {#if flashing}
-            {instance.artifact_source === "workspace" && !artifactReady
-              ? "Building / Flashing..."
-              : "Flashing..."}
-          {:else}
-            Flash Firmware
-          {/if}
+      {:else}
+        <ChannelDropdown
+          value={instance.installed_channel ?? "stable"}
+          {disabled}
+          onChange={onChannelChange}
+        />
+        <TagDropdown
+          value={activeTagValue}
+          options={activeTagOptions}
+          disabled={loadingTags || disabled}
+          onChange={(value) => onTagChange(value === "" ? null : value)}
+        />
+        <button class="textButton controlBottom" type="button" disabled={disabled || !needsDownload} onclick={onDownload}>
+          {needsDownload ? "Download" : "Downloaded"}
         </button>
-      </div>
-
-      {#if errorMessage}
-        <div class="err">
-          <div>{errorMessage}</div>
-          {#if errorActions.length}
-            <div class="hintTitle">Try this</div>
-            <ul class="hintList">
-              {#each errorActions as action}
-                <li>{action}</li>
-              {/each}
-            </ul>
-          {/if}
-        </div>
-      {/if}
-
-      {#if flashNotice}
-        <div class="warn">
-          {flashNotice.message}
-        </div>
       {/if}
     </div>
+
+    <div class="artifactRow" data-ready={artifactFolderReady}>
+      <button
+        class="iconButton"
+        type="button"
+        title="Open artifact folder"
+        aria-label="Open artifact folder"
+        disabled={!artifactFolderReady}
+        onclick={onOpenArtifactFolder}
+      >
+        <FolderIcon size={16} />
+      </button>
+      <span class="artifactPath" title={artifactPath ?? "No artifact"}>{artifactPathLabel}</span>
+      {#if instance.artifact_source === "workspace" && canCopyArtifact}
+        <button
+          class="inlineIconButton"
+          type="button"
+          title="Copy firmware file"
+          aria-label="Copy firmware file"
+          disabled={!artifactReady || !developmentArtifactPath}
+          onclick={onCopyArtifact}
+        >
+          <CopyIcon size={14} />
+        </button>
+      {/if}
+      {#if instance.artifact_source === "workspace"}
+        <span class="artifactAge" title={artifactBuildTitle}>{artifactBuildLabel}</span>
+      {/if}
+    </div>
+
+    {#if profileError}
+      <div class="message error">{profileError}</div>
+    {:else if instance.artifact_message && instance.artifact_source === "installed"}
+      <div class="message neutral">{instance.artifact_message}</div>
+    {/if}
+
+    <div class="flashRow">
+      <div class="flashSummary" data-ready={canFlash && !needsDownload}>
+        <span class="statusDot" aria-hidden="true"></span>
+        <div>
+          <div class="flashStatus">{flashStatusLabel}</div>
+          <div class="selectedFirmware">{selectedFirmware}</div>
+        </div>
+      </div>
+      <button class="primaryButton" type="button" disabled={disabled || !canFlash} onclick={onFlash}>
+        {#if flashing}
+          {instance.artifact_source === "workspace" && !artifactReady ? "Building / Flashing..." : "Flashing..."}
+        {:else if instance.artifact_source === "workspace" && !artifactReady}
+          Build &amp; Flash
+        {:else}
+          Flash Firmware
+        {/if}
+      </button>
+    </div>
+
+    {#if errorMessage}
+      <div class="message error">
+        <div>{errorMessage}</div>
+        {#if errorActions.length}
+          <div class="hintTitle">Try this</div>
+          <ul class="hintList">
+            {#each errorActions as action}
+              <li>{action}</li>
+            {/each}
+          </ul>
+        {/if}
+      </div>
+    {/if}
+
+    {#if flashNotice}
+      <div class="message warning">{flashNotice.message}</div>
+    {/if}
   </section>
 
   {#if instance.message && !instance.running}
-    <div class="muted">{instance.message}</div>
+    <div class="message neutral">{instance.message}</div>
   {/if}
 </div>
 
 <style>
-  .card {
+  .workflow {
     display: grid;
     gap: var(--space-4);
   }
 
-  .field {
-    display: grid;
-    gap: var(--space-1);
-  }
-
-  .step {
-    display: grid;
-    gap: var(--space-3);
+  .environmentStep,
+  .firmwareStep {
     border: 1px solid var(--border);
     border-radius: var(--radius-card);
-    padding: var(--space-3) var(--space-4);
-    background: color-mix(in srgb, var(--panel) 70%, transparent);
+    background: color-mix(in srgb, var(--panel) 72%, transparent);
   }
 
-  .stepHeader {
+  .environmentStep {
+    min-height: 64px;
+    padding: var(--space-3) var(--space-4);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-4);
+  }
+
+  .firmwareStep {
+    padding: var(--space-4);
+    display: grid;
+    gap: var(--space-4);
+  }
+
+  .stepHeading {
     display: flex;
     gap: var(--space-3);
     align-items: center;
+    min-width: 0;
   }
 
   .stepIndex {
@@ -261,10 +301,7 @@
     color: var(--muted);
     display: grid;
     place-items: center;
-    font-size: 11px;
-    line-height: 14px;
-    font-weight: 800;
-    font-family: var(--font-sans);
+    font: 800 11px/14px var(--font-sans);
     flex: 0 0 auto;
   }
 
@@ -273,155 +310,234 @@
     color: var(--ok);
   }
 
-  .stepTitleWrap {
-    display: grid;
-    gap: 2px;
-  }
-
   .stepTitle {
     color: var(--fg);
-    font-size: 13px;
-    line-height: 16px;
-    font-weight: 700;
-    font-family: var(--font-sans);
+    font: 700 14px/18px var(--font-sans);
   }
 
   .stepDetail {
     color: var(--muted);
-    font-size: 12px;
-    line-height: 16px;
-    font-family: var(--font-sans);
+    font: 400 11px/15px var(--font-sans);
   }
 
-  .stepBody {
-    display: grid;
-    gap: var(--space-3);
-  }
-
-  .label {
-    color: var(--muted);
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    font-size: 11px;
-    line-height: 14px;
-    font-family: var(--font-sans);
-  }
-
-  .row {
+  .controls {
     display: flex;
+    align-items: flex-end;
     gap: var(--space-3);
     flex-wrap: wrap;
-    align-items: center;
   }
 
-  .btnIcon {
-    width: 14px;
-    height: 14px;
-    display: inline-grid;
-    place-items: center;
-    flex: 0 0 auto;
+  .controlBottom {
+    align-self: flex-end;
   }
 
-  .folderAction {
+  .sourceActions {
     min-height: var(--control-height);
-    align-self: end;
-  }
-
-  .subtlePath {
-    overflow-wrap: anywhere;
-    color: var(--muted);
-    font-size: 12px;
-    line-height: 16px;
-    font-family: var(--font-sans);
-  }
-
-  .value {
-    overflow-wrap: anywhere;
-    color: var(--fg);
-    opacity: 0.64;
-    font-weight: 400;
-    font-family: var(--font-sans);
-    font-size: 13px;
-    line-height: 18px;
-  }
-
-  .muted {
-    color: var(--muted);
-    font-size: 12px;
-    line-height: 16px;
-  }
-
-  .mini {
-    appearance: none;
-    font: inherit;
-    padding: 7px var(--control-padding-x);
-    min-height: var(--control-height);
-    border-radius: var(--control-radius);
-    border: 1px solid var(--border);
-    background: transparent;
-    color: var(--muted);
-    cursor: pointer;
     display: inline-flex;
     align-items: center;
-    gap: 8px;
-    font-weight: 800;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    font-size: 11px;
-    line-height: 14px;
+    gap: var(--space-2);
   }
 
-  .mini:disabled {
-    opacity: 0.55;
-    cursor: not-allowed;
-  }
-
-  .actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--space-3);
-  }
-
-  .btn {
+  .textButton,
+  .primaryButton {
     appearance: none;
-    font: inherit;
-    padding: 8px var(--control-padding-x);
     min-height: var(--control-height);
+    padding: 7px var(--control-padding-x);
     border-radius: var(--control-radius);
     border: 1px solid var(--border);
     background: transparent;
     color: var(--muted);
     cursor: pointer;
-    font-weight: 800;
+    font: 800 11px/14px var(--font-sans);
     text-transform: uppercase;
     letter-spacing: 0.06em;
-    font-size: 12px;
-    line-height: 14px;
+    transition: 120ms ease;
+    transition-property: color, border-color, background-color, transform;
   }
 
-  .btn.primary {
+  .textButton:hover:not(:disabled) {
+    color: var(--fg);
+    border-color: var(--border-strong);
+    background: color-mix(in srgb, var(--fg) 5%, transparent);
+  }
+
+  .primaryButton {
     background: var(--value);
     color: var(--bg);
     border-color: var(--value);
+    white-space: nowrap;
   }
 
-  .btn:disabled {
-    opacity: 0.55;
+  .primaryButton:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--value) 88%, white);
+  }
+
+  .textButton:active:not(:disabled),
+  .primaryButton:active:not(:disabled),
+  .iconButton:active:not(:disabled),
+  .inlineIconButton:active:not(:disabled) {
+    transform: translateY(1px);
+  }
+
+  .textButton:focus-visible,
+  .primaryButton:focus-visible,
+  .iconButton:focus-visible,
+  .inlineIconButton:focus-visible {
+    outline: 2px solid var(--value);
+    outline-offset: 2px;
+  }
+
+  .textButton:disabled,
+  .primaryButton:disabled,
+  .iconButton:disabled,
+  .inlineIconButton:disabled {
+    opacity: 0.45;
     cursor: not-allowed;
   }
 
-  .err {
-    color: var(--err);
-    font-size: 12px;
-    line-height: 16px;
-    border: 1px solid var(--err);
+  .iconButton,
+  .inlineIconButton {
+    appearance: none;
+    padding: 0;
+    border-radius: var(--control-radius);
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    display: grid;
+    place-items: center;
+    transition: 120ms ease;
+    transition-property: color, border-color, background-color, transform;
+  }
+
+  .iconButton {
+    width: var(--control-height);
+    height: var(--control-height);
+    border: 1px solid var(--border);
+  }
+
+  .inlineIconButton {
+    width: 28px;
+    height: 28px;
+    border: 1px solid transparent;
+    flex: 0 0 auto;
+  }
+
+  .iconButton:hover:not(:disabled),
+  .inlineIconButton:hover:not(:disabled) {
+    color: var(--fg);
+    border-color: var(--border-strong);
+    background: color-mix(in srgb, var(--fg) 5%, transparent);
+  }
+
+  .dirtyBadge {
+    min-height: 28px;
+    padding: 4px 8px;
+    border: 1px solid color-mix(in srgb, var(--warn) 46%, var(--border));
+    border-radius: 999px;
+    color: var(--warn);
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font: 700 10px/13px var(--font-sans);
+    letter-spacing: 0.03em;
+    white-space: nowrap;
+  }
+
+  .artifactRow {
+    min-height: 48px;
+    padding: 4px 8px;
+    border: 1px solid var(--border);
+    border-radius: var(--control-radius);
+    background: color-mix(in srgb, var(--bg) 38%, transparent);
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+  }
+
+  .artifactRow[data-ready="true"] {
+    border-color: color-mix(in srgb, var(--ok) 28%, var(--border));
+  }
+
+  .artifactPath {
+    min-width: 120px;
+    max-width: 520px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: color-mix(in srgb, var(--fg) 82%, var(--muted));
+    font: 400 12px/16px var(--font-mono);
+  }
+
+  .artifactAge {
+    color: var(--muted);
+    font: 500 11px/15px var(--font-sans);
+    white-space: nowrap;
+  }
+
+  .flashRow {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
+    flex-wrap: wrap;
+  }
+
+  .flashSummary {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+  }
+
+  .statusDot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--warn);
+    flex: 0 0 auto;
+  }
+
+  .flashSummary[data-ready="true"] .statusDot {
+    background: var(--ok);
+  }
+
+  .flashStatus {
+    color: var(--fg);
+    font: 700 12px/16px var(--font-sans);
+  }
+
+  .selectedFirmware {
+    max-width: 440px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--muted);
+    font: 400 11px/15px var(--font-mono);
+  }
+
+  .message {
     border-radius: var(--control-radius);
     padding: var(--space-3) var(--space-4);
+    font: 400 12px/16px var(--font-sans);
+  }
+
+  .message.error {
+    color: var(--err);
+    border: 1px solid var(--err);
+  }
+
+  .message.warning {
+    color: var(--warn);
+    border: 1px solid var(--warn);
+  }
+
+  .message.neutral {
+    color: var(--muted);
+    border: 1px solid var(--border);
   }
 
   .hintTitle {
-    margin-top: 8px;
+    margin-top: var(--space-2);
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.06em;
@@ -430,18 +546,37 @@
   }
 
   .hintList {
-    margin: 8px 0 0;
+    margin: var(--space-2) 0 0;
     padding-left: 18px;
     display: grid;
     gap: 4px;
   }
 
-  .warn {
-    color: var(--warn);
-    font-size: 12px;
-    line-height: 16px;
-    border: 1px solid var(--warn);
-    border-radius: var(--control-radius);
-    padding: var(--space-3) var(--space-4);
+  @media (max-width: 760px) {
+    .environmentStep {
+      align-items: stretch;
+      flex-direction: column;
+    }
+
+    .controls :global(.wrap) {
+      width: 100%;
+    }
+
+    .sourceActions {
+      flex-wrap: wrap;
+    }
+
+    .artifactPath {
+      flex: 1 1 140px;
+    }
+
+    .flashRow {
+      align-items: stretch;
+      flex-direction: column;
+    }
+
+    .primaryButton {
+      width: fit-content;
+    }
   }
 </style>

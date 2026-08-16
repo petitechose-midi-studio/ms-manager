@@ -16,7 +16,7 @@ export function formatTargetLabel(target: FirmwareTarget | string): string {
   return target;
 }
 
-function formatRelativeAge(ms: number): string {
+export function formatRelativeAge(ms: number): string {
   const age = Math.max(0, Date.now() - ms);
   const minutes = Math.floor(age / 60000);
   if (minutes < 1) return "just now";
@@ -25,6 +25,13 @@ function formatRelativeAge(ms: number): string {
   if (hours < 24) return `${hours}h ago`;
   const days = Math.floor(hours / 24);
   return `${days}d ago`;
+}
+
+export function formatExactTimestamp(ms: number): string {
+  return new Date(ms).toLocaleString(undefined, {
+    dateStyle: "medium",
+    timeStyle: "medium",
+  });
 }
 
 export function formatDistributionReleaseLabel(tag: string | null | undefined, channel: Channel): string {
@@ -60,16 +67,16 @@ export function formatSelectedFirmwareLabel(options: {
   )}`;
 }
 
-export function formatLastFlashLabel(lastFlashed: LastFlashed | null | undefined): string {
-  if (!lastFlashed) return "Last flash: unknown";
+export function formatLastFlashValue(lastFlashed: LastFlashed | null | undefined): string {
+  if (!lastFlashed) return "Unknown";
 
   const target = formatTargetLabel(lastFlashed.profile);
   const age = formatRelativeAge(lastFlashed.flashed_at_ms);
 
   if (lastFlashed.tag === "workspace") {
     const buildProfile = lastFlashed.build_profile ? ` · ${lastFlashed.build_profile}` : "";
-    return `Last flash: Development · ${target}${buildProfile} (${age})`;
+    return `Development · ${target}${buildProfile} · ${age}`;
   }
 
-  return `Last flash: Distribution · ${lastFlashed.tag} · ${formatChannelLabel(lastFlashed.channel)} · ${target} (${age})`;
+  return `Distribution · ${lastFlashed.tag} · ${formatChannelLabel(lastFlashed.channel)} · ${target} · ${age}`;
 }

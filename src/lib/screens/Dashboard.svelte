@@ -5,6 +5,7 @@
   import {
     bridgeLogOpen,
     buildWorkspaceFirmware,
+    fileCopyToClipboard,
     pathOpen,
     uxRecordingSessionRotate,
     uxRecordingsOpen,
@@ -306,6 +307,18 @@
     }
   }
 
+  async function copyArtifactFile(path?: string | null) {
+    if (!path) return;
+    try {
+      await fileCopyToClipboard(path);
+      activity.add("ok", "flash", "firmware file copied to clipboard");
+    } catch (e) {
+      const err = e as { message?: string };
+      const message = typeof err?.message === "string" ? err.message : String(e);
+      activity.add("warn", "flash", `copy firmware failed: ${message}`, e);
+    }
+  }
+
   async function openBridgeLogs() {
     try {
       await bridgeLogOpen();
@@ -579,9 +592,12 @@
               loadingBuildProfiles={workspaceProfilesLoading}
               buildProfileOptions={activeBuildProfileOptions}
               selectedBuildProfile={activeBuildProfileId}
+              developmentSourcePath={activeBuildProfile?.source_path ?? null}
               developmentArtifactPath={activeBuildProfile?.artifact_path ?? null}
               artifactReady={activeBuildProfile?.artifact_ready ?? false}
+              artifactBuiltAtMs={activeBuildProfile?.artifact_built_at_ms ?? null}
               sourceDirty={activeBuildProfile?.source_dirty ?? false}
+              canCopyArtifact={$dashState.platform?.os === "windows"}
               building={buildingFirmware}
               profileError={workspaceProfileError}
               needsDownload={needsDownloadActiveInstance}
@@ -595,12 +611,14 @@
               onTargetChange={setActiveInstanceTarget}
               onBuildProfileChange={setActiveBuildProfile}
               onBuild={buildActiveFirmware}
-              onOpenFolder={() =>
+              onOpenSourceFolder={() => openSourcePath(activeBuildProfile?.source_path)}
+              onOpenArtifactFolder={() =>
                 openSourcePath(
                   activeInstance.artifact_source === "workspace"
                     ? activeBuildProfile?.artifact_path
                     : activeInstance.artifact_location_path,
                 )}
+              onCopyArtifact={() => copyArtifactFile(activeBuildProfile?.artifact_path)}
               onChannelChange={setActiveInstanceChannel}
               onTagChange={setActiveInstanceTag}
               onDownload={() => dash.installForBridgeInstance(activeInstance.instance_id)}
@@ -712,6 +730,22 @@
     letter-spacing: 0.06em;
     text-transform: uppercase;
     padding: 6px 12px;
+    transition: 120ms ease;
+    transition-property: color, border-color, background-color, transform;
+  }
+
+  .sectionTabs button:hover:not(.active) {
+    color: var(--fg);
+    background: color-mix(in srgb, var(--fg) 5%, transparent);
+  }
+
+  .sectionTabs button:active {
+    transform: translateY(1px);
+  }
+
+  .sectionTabs button:focus-visible {
+    outline: 2px solid var(--value);
+    outline-offset: 2px;
   }
 
   .sectionTabs button.active {

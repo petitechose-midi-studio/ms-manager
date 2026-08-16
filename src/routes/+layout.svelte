@@ -48,6 +48,7 @@
 
     --bg: #0c0f14;
     --panel: #11151c;
+    --panel-elevated: #171d27;
     --fg: #d9dde3;
     --muted: #9aa3ad;
     --border: #2b313a;
@@ -68,19 +69,19 @@
     --font-log: var(--font-mono);
     --font-sans: "Aptos", "Segoe UI Variable Text", "Segoe UI", Arial, sans-serif;
 
-    --space-1: 6px;
+    --space-1: 4px;
     --space-2: 8px;
-    --space-3: 10px;
-    --space-4: 12px;
-    --space-5: 14px;
-    --radius-panel: 6px;
+    --space-3: 12px;
+    --space-4: 16px;
+    --space-5: 24px;
+    --radius-panel: 8px;
     --radius-card: 8px;
     --tabs-strip-height: 78px;
     --control-height: 40px;
     --control-radius: 6px;
-    --control-padding-x: 10px;
+    --control-padding-x: 12px;
     --pill-padding-y: 4px;
-    --pill-padding-x: 10px;
+    --pill-padding-x: 8px;
 
     font-size: 15px;
     line-height: 22px;
@@ -94,6 +95,7 @@
 
     --bg: #f6f7f8;
     --panel: #ffffff;
+    --panel-elevated: #f1f4f7;
     --fg: #10131a;
     --muted: #475569;
     --border: #d1d5db;

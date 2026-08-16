@@ -12,8 +12,10 @@ use crate::services::{artifact_paths, flash, process};
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct WorkspaceFirmwareProfile {
     pub id: String,
+    pub source_path: PathBuf,
     pub artifact_path: PathBuf,
     pub artifact_ready: bool,
+    pub artifact_built_at_ms: Option<u64>,
     pub source_dirty: bool,
 }
 
@@ -41,15 +43,15 @@ pub async fn build(
     target: FirmwareTarget,
     profile_id: &str,
 ) -> ApiResult<WorkspaceFirmwareProfile> {
-    let mut profile = profile(target, profile_id).await?;
+    let selected_profile = profile(target, profile_id).await?;
 
-    if profile.source_dirty {
+    if selected_profile.source_dirty {
         flash::emit_flash_message(
             app,
             FlashMessageLevel::Warn,
             format!(
                 "Building {}/{} from a source repository with uncommitted changes; this firmware will not map to a clean commit.",
-                app_name(target), profile.id
+                app_name(target), selected_profile.id
             ),
         );
     }
@@ -64,7 +66,7 @@ pub async fn build(
             "--target",
             "teensy",
             "--env",
-            &profile.id,
+            &selected_profile.id,
             "--stream",
         ],
     )
@@ -72,12 +74,16 @@ pub async fn build(
     if !output.status.success() {
         return Err(command_error(
             "firmware_build_failed",
-            &format!("Development firmware build failed for {}.", profile.id),
+            &format!(
+                "Development firmware build failed for {}.",
+                selected_profile.id
+            ),
             &output,
         ));
     }
 
-    if !profile.artifact_path.is_file() {
+    let profile = profile(target, profile_id).await?;
+    if !profile.artifact_ready {
         return Err(ApiError::new(
             "firmware_build_failed",
             format!(
@@ -87,7 +93,6 @@ pub async fn build(
         ));
     }
 
-    profile.artifact_ready = true;
     Ok(profile)
 }
 

@@ -249,6 +249,10 @@ export function pathOpen(path: string): Promise<void> {
   return invokeApi<void>("path_open", { path });
 }
 
+export function fileCopyToClipboard(path: string): Promise<void> {
+  return invokeApi<void>("file_copy_to_clipboard", { path });
+}
+
 export function urlOpen(url: string): Promise<void> {
   return invokeApi<void>("url_open", { url });
 }
