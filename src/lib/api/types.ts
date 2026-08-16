@@ -30,6 +30,7 @@ export type WorkspaceFirmwareProfile = {
   id: string;
   artifact_path: string;
   artifact_ready: boolean;
+  source_dirty: boolean;
 };
 
 export type DeviceStatus = {

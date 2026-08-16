@@ -16,8 +16,9 @@ pub async fn workspace_firmware_profiles(
 pub async fn build_workspace_firmware(
     target: ms_manager_core::FirmwareTarget,
     build_profile: String,
+    app: tauri::AppHandle,
 ) -> ApiResult<workspace_firmware::WorkspaceFirmwareProfile> {
-    workspace_firmware::build(target, &build_profile).await
+    workspace_firmware::build(&app, target, &build_profile).await
 }
 
 #[tauri::command]
@@ -54,13 +55,22 @@ pub async fn flash_bridge_instance(
                 )
             })?;
         let mut profile = workspace_firmware::profile(binding.target, profile_id).await?;
+        if profile.artifact_ready && profile.source_dirty {
+            flash::emit_flash_message(
+                &app,
+                FlashMessageLevel::Warn,
+                format!(
+                    "Source repository has uncommitted changes; Flash will use the existing {profile_id} artifact. Run Build Firmware first if it should include those edits."
+                ),
+            );
+        }
         if !profile.artifact_ready {
             flash::emit_flash_message(
                 &app,
                 FlashMessageLevel::Info,
                 format!("Firmware artifact missing; building {profile_id}..."),
             );
-            profile = match workspace_firmware::build(binding.target, profile_id).await {
+            profile = match workspace_firmware::build(&app, binding.target, profile_id).await {
                 Ok(profile) => profile,
                 Err(error) => {
                     flash::emit_flash_done(&app, false);

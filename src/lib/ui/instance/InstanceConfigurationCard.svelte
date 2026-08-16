@@ -17,6 +17,7 @@
   export let selectedBuildProfile = "";
   export let developmentArtifactPath: string | null = null;
   export let artifactReady = false;
+  export let sourceDirty = false;
   export let building = false;
   export let profileError: string | null = null;
   export let needsDownload = false;
@@ -148,6 +149,15 @@
           ? (developmentArtifactPath ?? "-")
           : (instance.artifact_location_path ?? artifactConfigPath ?? "-")}
       </div>
+
+      {#if instance.artifact_source === "workspace" && sourceDirty}
+        <div class="warn">
+          Source repository has uncommitted changes.
+          {artifactReady
+            ? "Flash uses the existing artifact; rebuild if it may not contain the current edits."
+            : "The next build will not map to a clean commit."}
+        </div>
+      {/if}
 
       {#if profileError}
         <div class="err">{profileError}</div>

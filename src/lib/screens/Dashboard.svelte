@@ -581,6 +581,7 @@
               selectedBuildProfile={activeBuildProfileId}
               developmentArtifactPath={activeBuildProfile?.artifact_path ?? null}
               artifactReady={activeBuildProfile?.artifact_ready ?? false}
+              sourceDirty={activeBuildProfile?.source_dirty ?? false}
               building={buildingFirmware}
               profileError={workspaceProfileError}
               needsDownload={needsDownloadActiveInstance}

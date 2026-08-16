@@ -1,16 +1,20 @@
 use std::path::{Path, PathBuf};
+use std::process::Stdio;
 
 use ms_manager_core::FirmwareTarget;
 use serde::{Deserialize, Serialize};
+use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
 
 use crate::api_error::{ApiError, ApiResult};
-use crate::services::{artifact_paths, process};
+use crate::models::FlashMessageLevel;
+use crate::services::{artifact_paths, flash, process};
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct WorkspaceFirmwareProfile {
     pub id: String,
     pub artifact_path: PathBuf,
     pub artifact_ready: bool,
+    pub source_dirty: bool,
 }
 
 pub async fn profiles(target: FirmwareTarget) -> ApiResult<Vec<WorkspaceFirmwareProfile>> {
@@ -33,13 +37,26 @@ pub async fn profiles(target: FirmwareTarget) -> ApiResult<Vec<WorkspaceFirmware
 }
 
 pub async fn build(
+    app: &tauri::AppHandle,
     target: FirmwareTarget,
     profile_id: &str,
 ) -> ApiResult<WorkspaceFirmwareProfile> {
     let mut profile = profile(target, profile_id).await?;
 
+    if profile.source_dirty {
+        flash::emit_flash_message(
+            app,
+            FlashMessageLevel::Warn,
+            format!(
+                "Building {}/{} from a source repository with uncommitted changes; this firmware will not map to a clean commit.",
+                app_name(target), profile.id
+            ),
+        );
+    }
+
     let root = workspace_root()?;
-    let output = run_ms(
+    let output = run_ms_streaming(
+        app,
         &root,
         &[
             "build",
@@ -48,6 +65,7 @@ pub async fn build(
             "teensy",
             "--env",
             &profile.id,
+            "--stream",
         ],
     )
     .await?;
@@ -111,6 +129,79 @@ fn workspace_root() -> ApiResult<PathBuf> {
 }
 
 async fn run_ms(root: &Path, args: &[&str]) -> ApiResult<std::process::Output> {
+    ms_command(root, args)?.output().await.map_err(|error| {
+        ApiError::new(
+            "development_command_failed",
+            format!("unable to run ms-dev-env: {error}"),
+        )
+    })
+}
+
+async fn run_ms_streaming(
+    app: &tauri::AppHandle,
+    root: &Path,
+    args: &[&str],
+) -> ApiResult<std::process::Output> {
+    let mut command = ms_command(root, args)?;
+    let mut child = command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| {
+            ApiError::new(
+                "development_command_failed",
+                format!("unable to run ms-dev-env: {error}"),
+            )
+        })?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| ApiError::new("internal_error", "missing build stdout"))?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| ApiError::new("internal_error", "missing build stderr"))?;
+    let stdout_task = tokio::spawn(stream_lines(stdout, app.clone()));
+    let stderr_task = tokio::spawn(stream_lines(stderr, app.clone()));
+    let status = child.wait().await.map_err(|error| {
+        ApiError::new(
+            "development_command_failed",
+            format!("unable to wait for ms-dev-env: {error}"),
+        )
+    })?;
+    let stdout = stdout_task
+        .await
+        .map_err(|error| ApiError::new("io_read_failed", format!("build stdout: {error}")))?
+        .map_err(|error| ApiError::new("io_read_failed", format!("build stdout: {error}")))?;
+    let stderr = stderr_task
+        .await
+        .map_err(|error| ApiError::new("io_read_failed", format!("build stderr: {error}")))?
+        .map_err(|error| ApiError::new("io_read_failed", format!("build stderr: {error}")))?;
+
+    Ok(std::process::Output {
+        status,
+        stdout,
+        stderr,
+    })
+}
+
+async fn stream_lines<R>(reader: R, app: tauri::AppHandle) -> std::io::Result<Vec<u8>>
+where
+    R: AsyncRead + Unpin,
+{
+    let mut output = Vec::new();
+    let mut lines = BufReader::new(reader).lines();
+    while let Some(line) = lines.next_line().await? {
+        output.extend_from_slice(line.as_bytes());
+        output.push(b'\n');
+        if !line.trim().is_empty() {
+            flash::emit_flash_message(&app, FlashMessageLevel::Info, line);
+        }
+    }
+    Ok(output)
+}
+
+fn ms_command(root: &Path, args: &[&str]) -> ApiResult<tokio::process::Command> {
     let python = if cfg!(windows) {
         root.join(".venv/Scripts/python.exe")
     } else {
@@ -131,13 +222,9 @@ async fn run_ms(root: &Path, args: &[&str]) -> ApiResult<std::process::Output> {
         .arg("--workspace")
         .arg(root)
         .args(args)
+        .env("PYTHONUNBUFFERED", "1")
         .current_dir(root);
-    command.output().await.map_err(|error| {
-        ApiError::new(
-            "development_command_failed",
-            format!("unable to run ms-dev-env: {error}"),
-        )
-    })
+    Ok(command)
 }
 
 fn command_error(code: &str, message: &str, output: &std::process::Output) -> ApiError {
