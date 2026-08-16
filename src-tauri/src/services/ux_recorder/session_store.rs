@@ -229,6 +229,8 @@ pub(super) fn write_event(
 ) -> ApiResult<WriteEventOutcome> {
     let line = event_line(&session, event, payload);
     let pending = pending_encoder_turn_from_line(&line, event);
+    let raw_encoder_turn = line.get("kind").and_then(Value::as_str) == Some("input")
+        && line.get("gesture").and_then(Value::as_str) == Some("turn");
 
     let mut guard = state_mutex();
     let Some(active) = guard.sessions.get_mut(&session.instance_id) else {
@@ -246,6 +248,27 @@ pub(super) fn write_event(
         });
     };
     active.raw_event_count += 1;
+
+    // Raw turns are the lossless replay source. Persist them without treating
+    // them as semantic boundaries, so the following encoder outcome can still
+    // coalesce with the preceding turn.
+    if raw_encoder_turn {
+        let line = finalize_event_line(active, line);
+        append_json_line(&active.path, &line)?;
+        active.event_count += 1;
+        let event_count = active.event_count;
+        let raw_event_count = active.raw_event_count;
+        let path = active.path.clone();
+        let recorded = RecordedEvent {
+            instance_id: active.instance_id.clone(),
+            path: path.clone(),
+            event_count,
+            line,
+        };
+        drop(guard);
+        update_index_counts(layout, &path, event_count, raw_event_count)?;
+        return Ok(recorded_outcome(vec![recorded]));
+    }
 
     if let Some(next_pending) = pending {
         if let Some(existing) = active.pending_encoder_turn.as_mut() {
@@ -1076,6 +1099,82 @@ mod tests {
         assert_eq!(line["first_value_milli"], 199);
         assert_eq!(line["last_value_milli"], 128);
         assert!(line.get("delta_milli").is_none());
+    }
+
+    #[test]
+    fn raw_encoder_inputs_do_not_break_semantic_coalescing() {
+        let root = temp_index_path("payload");
+        std::fs::create_dir_all(&root).expect("create payload root");
+        let layout = PayloadLayout::resolve(root.to_str()).expect("resolve payload layout");
+        let instance_id = "raw-input-coalescing";
+        let session =
+            start_session(&layout, instance_id, Some("controller"), "test").expect("start session");
+        let path = session.path.clone();
+        let event = BridgeLogEvent {
+            instance_id: Some(instance_id.to_string()),
+            port: 9000,
+            timestamp: "2026-05-01T09:00:00.000Z".to_string(),
+            kind: "debug".to_string(),
+            level: Some("info".to_string()),
+            message: String::new(),
+        };
+        let payloads = [
+            serde_json::json!({
+                "seq": 1, "ms": 1000, "kind": "input", "gesture": "turn",
+                "encoder": "OPT", "encoder_id": 401, "value_kind": "absolute",
+                "value_milli": 500
+            }),
+            serde_json::json!({
+                "seq": 2, "ms": 1000, "kind": "encoder", "gesture": "turn",
+                "encoder": "OPT", "encoder_id": 401, "value_kind": "absolute",
+                "value_milli": 500, "mode": "step", "effect": "edit",
+                "target": "step", "target_step": 0
+            }),
+            serde_json::json!({
+                "seq": 3, "ms": 1050, "kind": "input", "gesture": "turn",
+                "encoder": "OPT", "encoder_id": 401, "value_kind": "absolute",
+                "value_milli": 400
+            }),
+            serde_json::json!({
+                "seq": 4, "ms": 1050, "kind": "encoder", "gesture": "turn",
+                "encoder": "OPT", "encoder_id": 401, "value_kind": "absolute",
+                "value_milli": 400, "mode": "step", "effect": "edit",
+                "target": "step", "target_step": 0
+            }),
+            serde_json::json!({
+                "seq": 5, "ms": 1100, "kind": "input", "gesture": "press",
+                "button": "NAV", "button_id": 40
+            }),
+            serde_json::json!({
+                "seq": 6, "ms": 1100, "kind": "button", "gesture": "press",
+                "button": "NAV", "button_id": 40, "mode": "step",
+                "effect": "apply"
+            }),
+        ];
+
+        for payload in payloads {
+            let active = existing_session(instance_id).expect("active session");
+            write_event(&layout, active, &event, payload).expect("record event");
+        }
+        let active = remove_session(instance_id).expect("remove active session");
+        let closed = close_session(&layout, active, "test_complete").expect("close session");
+
+        let rows: Vec<Value> = std::fs::read_to_string(&path)
+            .expect("read session")
+            .lines()
+            .map(|line| serde_json::from_str(line).expect("parse session line"))
+            .collect();
+        assert_eq!(closed.raw_event_count, 6);
+        assert_eq!(closed.event_count, 5);
+        assert_eq!(rows[1]["seq"], 1);
+        assert_eq!(rows[2]["seq"], 3);
+        assert_eq!(rows[3]["kind"], "encoder");
+        assert_eq!(rows[3]["count"], 2);
+        assert_eq!(rows[3]["first_seq"], 2);
+        assert_eq!(rows[3]["last_seq"], 4);
+        assert_eq!(rows[4]["seq"], 5);
+        assert_eq!(rows[5]["seq"], 6);
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

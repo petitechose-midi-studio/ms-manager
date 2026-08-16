@@ -194,6 +194,9 @@ fn handle_write_outcome(app: &tauri::AppHandle, outcome: session_store::WriteEve
 
 fn emit_recorded_events(app: &tauri::AppHandle, events: Vec<session_store::RecordedEvent>) {
     for recorded in events {
+        if recorded.line.get("kind").and_then(Value::as_str) == Some("input") {
+            continue;
+        }
         let summary = uxr_parser::summarize_ux_event(&recorded.line);
         let presentation = uxr_parser::present_ux_event(&recorded.line);
         let _ = app.emit(
