@@ -151,12 +151,7 @@
       </div>
 
       {#if instance.artifact_source === "workspace" && sourceDirty}
-        <div class="warn">
-          Source repository has uncommitted changes.
-          {artifactReady
-            ? "Flash uses the existing artifact; rebuild if it may not contain the current edits."
-            : "The next build will not map to a clean commit."}
-        </div>
+        <div class="warn">Uncommitted source changes</div>
       {/if}
 
       {#if profileError}

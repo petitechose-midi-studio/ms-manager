@@ -68,6 +68,13 @@
     return tab.kind === "instance";
   }
 
+  function ignoresTabInteraction(event: Event): boolean {
+    return (
+      event.target instanceof Element &&
+      event.target.closest("[data-tab-interaction='ignore']") !== null
+    );
+  }
+
   function clearDragState() {
     draggedKey = null;
     dropKey = null;
@@ -94,8 +101,10 @@
 
   function onTabPointerDown(tab: ControllerTabItem, event: PointerEvent) {
     if (!isReorderable(tab) || event.button !== 0) return;
-    const target = event.target;
-    if (!(target instanceof Element) || !target.closest("[data-drag-handle='true']")) {
+    if (
+      event.target instanceof Element &&
+      (event.target.closest("input") || ignoresTabInteraction(event))
+    ) {
       return;
     }
 
@@ -133,9 +142,9 @@
     if (!didDrag) return;
 
     suppressClick = true;
-    queueMicrotask(() => {
+    window.setTimeout(() => {
       suppressClick = false;
-    });
+    }, 0);
 
     if (!commit || !sourceKey || !targetKey || sourceKey === targetKey) return;
 
@@ -174,6 +183,7 @@
   }
 
   function onTabKeydown(key: string, event: KeyboardEvent) {
+    if (event.target instanceof HTMLInputElement) return;
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
       onTabClick(key);
@@ -213,7 +223,14 @@
         aria-pressed={tab.key === activeKey}
         data-tab-key={tab.key}
         data-reorderable={tab.kind === "instance"}
-        onclick={() => onTabClick(tab.key)}
+        onclick={(event) => {
+          if (ignoresTabInteraction(event)) return;
+          onTabClick(tab.key);
+        }}
+        ondblclick={(event) => {
+          if (ignoresTabInteraction(event)) return;
+          if (tab.kind === "instance") onBeginRename(tab.instance.instance_id);
+        }}
         onkeydown={(event) => onTabKeydown(tab.key, event)}
         onpointerdown={(event) => onTabPointerDown(tab, event)}
       >
@@ -235,21 +252,13 @@
             />
           {:else}
             {#if tab.kind === "instance"}
-              <button
-                class="tabTitleButton"
-                type="button"
-                title="Double-click to rename"
-                onclick={(event) => event.stopPropagation()}
-                ondblclick={() => onBeginRename(tab.instance.instance_id)}
-              >
-                {tab.label}
-              </button>
+              <span class="tabLabel" title="Double-click to rename">{tab.label}</span>
             {:else}
               <span class="tabLabel">{tab.label}</span>
             {/if}
           {/if}
           {#if tab.kind === "instance"}
-            <span class="dragHandle" data-drag-handle="true" aria-hidden="true" title="Reorder tab">
+            <span class="dragHandle" aria-hidden="true" title="Drag to reorder">
               <svg class="dragGrip" viewBox="0 0 10 12" focusable="false">
                 <circle cx="2" cy="2" r="1.1"></circle>
                 <circle cx="8" cy="2" r="1.1"></circle>
@@ -345,8 +354,14 @@
     background: color-mix(in srgb, var(--panel-elevated) 72%, transparent);
   }
 
+  .tab.reorderable {
+    cursor: grab;
+    user-select: none;
+  }
+
   .tab.dragging {
     opacity: 0.78;
+    cursor: grabbing;
   }
 
   .tab.dragTarget {
@@ -374,27 +389,6 @@
     flex: 1 1 auto;
   }
 
-  .tabTitleButton {
-    appearance: none;
-    border: 0;
-    background: transparent;
-    color: inherit;
-    font: inherit;
-    font-family: var(--font-sans);
-    font-weight: 700;
-    font-size: 13px;
-    line-height: 16px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    flex: 1 1 auto;
-    min-width: 0;
-    padding: 0;
-    margin: 0;
-    text-align: left;
-    cursor: default;
-  }
-
   .tabTitleInput {
     appearance: none;
     min-width: 0;
@@ -414,6 +408,8 @@
     outline: none;
     box-shadow: none;
     caret-color: var(--fg);
+    cursor: text;
+    user-select: text;
   }
 
   .tabTitleInput:disabled {
@@ -430,7 +426,7 @@
     place-items: center;
     color: var(--muted);
     background: transparent;
-    cursor: move;
+    cursor: inherit;
     transition:
       color 140ms ease,
       background-color 140ms ease,
