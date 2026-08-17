@@ -1,8 +1,8 @@
 [package]
 name = "ms-manager"
 version = "0.1.4-beta.1"
-description = "A Tauri App"
-authors = ["you"]
+description = "Development, firmware, and device manager for MIDI Studio."
+authors = ["petitechose.audio"]
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html

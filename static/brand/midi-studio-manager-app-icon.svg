@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title description">
+  <title id="title">MIDI Studio Manager</title>
+  <desc id="description">P5-C petitechose.audio mark on the MIDI Studio Manager application tile</desc>
+  <rect x="16" y="16" width="480" height="480" rx="104" fill="#090909" />
+  <g transform="translate(52 52) scale(17)">
+    <path
+      d="M5 21V8.5A5.5 5.5 0 0 1 10.5 3H14a5.5 5.5 0 0 1 5.5 5.5v.75A5.75 5.75 0 0 1 13.75 15c-1.5 0-2.95.25-4.25.75"
+      fill="none"
+      stroke="#f3f4f6"
+      stroke-width="3.2"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    />
+    <circle cx="12.3" cy="8.6" r="2.05" fill="#f51b4b" />
+  </g>
+</svg>

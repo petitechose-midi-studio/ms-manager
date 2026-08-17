@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 276 40" role="img" aria-labelledby="title description">
+  <title id="title">petitechose.audio</title>
+  <desc id="description">Primary petitechose.audio brand lockup</desc>
+  <g transform="translate(1 1) scale(1.58)">
+    <path
+      d="M5 21V8.5A5.5 5.5 0 0 1 10.5 3H14a5.5 5.5 0 0 1 5.5 5.5v.75A5.75 5.75 0 0 1 13.75 15c-1.5 0-2.95.25-4.25.75"
+      fill="none"
+      stroke="#f3f4f6"
+      stroke-width="3.2"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    />
+    <circle cx="12.3" cy="8.6" r="2.05" fill="#f51b4b" />
+  </g>
+  <text
+    x="46"
+    y="26.5"
+    fill="#f3f4f6"
+    font-family="Aptos, 'Segoe UI Variable Text', 'Segoe UI', Arial, sans-serif"
+    font-size="22"
+    font-weight="400"
+    letter-spacing="-.25"
+  >petitechose.audio</text>
+</svg>
