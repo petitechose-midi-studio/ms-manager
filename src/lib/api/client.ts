@@ -21,6 +21,7 @@ import type {
   ControllerFsRenameRequest,
   ControllerFsTransferResponse,
   DeviceStatus,
+  FirmwareTarget,
   InstallState,
   LastFlashed,
   LocalFsDeleteRequest,
@@ -43,6 +44,7 @@ import type {
   TabOrderResponse,
   TabOrderSetRequest,
   UxRecordingSessionInfo,
+  WorkspaceFirmwareProfile,
 } from "$lib/api/types";
 
 export function statusGet(): Promise<Status> {
@@ -216,8 +218,27 @@ export function installBridgeInstance(instanceId: string): Promise<InstallState>
   return invokeApi<InstallState>("install_bridge_instance", { instanceId });
 }
 
-export function flashBridgeInstance(instanceId: string): Promise<LastFlashed> {
-  return invokeApi<LastFlashed>("flash_bridge_instance", { instanceId });
+export function workspaceFirmwareProfiles(
+  target: FirmwareTarget,
+): Promise<WorkspaceFirmwareProfile[]> {
+  return invokeApi<WorkspaceFirmwareProfile[]>("workspace_firmware_profiles", { target });
+}
+
+export function buildWorkspaceFirmware(
+  target: FirmwareTarget,
+  buildProfile: string,
+): Promise<WorkspaceFirmwareProfile> {
+  return invokeApi<WorkspaceFirmwareProfile>("build_workspace_firmware", {
+    target,
+    buildProfile,
+  });
+}
+
+export function flashBridgeInstance(
+  instanceId: string,
+  buildProfile?: string | null,
+): Promise<LastFlashed> {
+  return invokeApi<LastFlashed>("flash_bridge_instance", { instanceId, buildProfile });
 }
 
 export function payloadRootRelocate(newRoot: string): Promise<Status> {
@@ -226,6 +247,10 @@ export function payloadRootRelocate(newRoot: string): Promise<Status> {
 
 export function pathOpen(path: string): Promise<void> {
   return invokeApi<void>("path_open", { path });
+}
+
+export function fileCopyToClipboard(path: string): Promise<void> {
+  return invokeApi<void>("file_copy_to_clipboard", { path });
 }
 
 export function urlOpen(url: string): Promise<void> {

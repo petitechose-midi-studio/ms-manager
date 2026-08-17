@@ -32,31 +32,31 @@ export function createDashboard(activity: Activity) {
     refreshStatus: status.refreshStatus,
   });
 
-  let bridgeLogQueue: {
+  let activityQueue: {
     level: ActivityLevel;
     scope: ActivityScope;
     message: string;
     details?: unknown;
   }[] = [];
-  let bridgeLogFlushHandle: number | null = null;
+  let activityFlushHandle: number | null = null;
 
-  function flushBridgeLogs() {
-    if (!bridgeLogQueue.length) return;
-    activity.addMany(bridgeLogQueue);
-    bridgeLogQueue = [];
+  function flushQueuedActivity() {
+    if (!activityQueue.length) return;
+    activity.addMany(activityQueue);
+    activityQueue = [];
   }
 
-  function queueBridgeLog(
+  function queueActivity(
     level: ActivityLevel,
     scope: ActivityScope,
     message: string,
     details?: unknown,
   ) {
-    bridgeLogQueue.push({ level, scope, message, details });
-    if (bridgeLogFlushHandle != null) return;
-    bridgeLogFlushHandle = requestAnimationFrame(() => {
-      bridgeLogFlushHandle = null;
-      flushBridgeLogs();
+    activityQueue.push({ level, scope, message, details });
+    if (activityFlushHandle != null) return;
+    activityFlushHandle = requestAnimationFrame(() => {
+      activityFlushHandle = null;
+      flushQueuedActivity();
     });
   }
 
@@ -82,7 +82,7 @@ export function createDashboard(activity: Activity) {
       matchedInstance?.display_name?.trim() || matchedInstance?.configured_serial || payload.instance_id;
     const prefix = displayName ? `[${displayName}] ` : "";
     const level = payload.level === "error" ? "error" : payload.level === "warn" ? "warn" : "info";
-    queueBridgeLog(level, "bridge", `${prefix}${payload.message}`, payload);
+    queueActivity(level, "bridge", `${prefix}${payload.message}`, payload);
   }
 
   function copyUxRecorderEventToActivity(payload: DashboardUxRecorderEvent) {
@@ -109,7 +109,7 @@ export function createDashboard(activity: Activity) {
       return;
     }
     if (payload.type === "event_recorded") {
-      queueBridgeLog("info", "ux", payload.summary, payload);
+      queueActivity("info", "ux", payload.summary, payload);
       return;
     }
     activity.add("warn", "ux", payload.message, payload);
@@ -145,9 +145,11 @@ export function createDashboard(activity: Activity) {
     const unlistenFlash = await listen<FlashEvent>(FLASH_EVENT, (event) => {
       const payload = event.payload;
       if (payload.type === "message") {
-        if (payload.level === "warn") {
-          activity.add("warn", "flash", payload.message);
-        }
+        queueActivity(
+          payload.level === "warn" ? "warn" : "info",
+          "flash",
+          payload.message,
+        );
         state.update((current) => ({
           ...current,
           now: nowFromFlash(payload),
@@ -212,11 +214,11 @@ export function createDashboard(activity: Activity) {
     }, 2000);
 
     return () => {
-      if (bridgeLogFlushHandle != null) {
-        cancelAnimationFrame(bridgeLogFlushHandle);
-        bridgeLogFlushHandle = null;
+      if (activityFlushHandle != null) {
+        cancelAnimationFrame(activityFlushHandle);
+        activityFlushHandle = null;
       }
-      flushBridgeLogs();
+      flushQueuedActivity();
       unlistenInstall();
       unlistenFlash();
       unlistenBridgeLog();

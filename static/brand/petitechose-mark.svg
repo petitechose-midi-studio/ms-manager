@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" role="img" aria-labelledby="title">
+  <title id="title">petitechose.audio</title>
+  <g id="petitechose-mark">
+    <path
+      d="M5 21V8.5A5.5 5.5 0 0 1 10.5 3H14a5.5 5.5 0 0 1 5.5 5.5v.75A5.75 5.75 0 0 1 13.75 15c-1.5 0-2.95.25-4.25.75"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="3.2"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    />
+    <circle cx="12.3" cy="8.6" r="2.05" fill="var(--petitechose-dot, #f51b4b)" />
+  </g>
+</svg>

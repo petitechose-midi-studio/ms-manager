@@ -2,7 +2,16 @@
   import { onMount } from "svelte";
   import { getCurrentWindow } from "@tauri-apps/api/window";
   import { LogicalSize } from "@tauri-apps/api/dpi";
-  import { bridgeLogOpen, pathOpen, uxRecordingSessionRotate, uxRecordingsOpen } from "$lib/api/client";
+  import {
+    bridgeLogOpen,
+    buildWorkspaceFirmware,
+    fileCopyToClipboard,
+    pathOpen,
+    uxRecordingSessionRotate,
+    uxRecordingsOpen,
+    workspaceFirmwareProfiles,
+  } from "$lib/api/client";
+  import type { FirmwareTarget, WorkspaceFirmwareProfile } from "$lib/api/types";
 
   import type { ActivityEntry, ActivityFilter } from "$lib/state/activity";
   import { createActivityLog, matchesActivityFilter } from "$lib/state/activity";
@@ -37,6 +46,17 @@
   let tabNameDraft = "";
   let tabNameDraftKey: string | null = null;
   let tabRenamingInstanceId: string | null = null;
+  let workspaceProfiles: WorkspaceFirmwareProfile[] = [];
+  let selectedBuildProfiles: Record<FirmwareTarget, string> = {
+    standalone: "",
+    bitwig: "",
+  };
+  let workspaceProfileError: string | null = null;
+  let workspaceProfilesLoading = false;
+  let buildingFirmware = false;
+  let activeWorkspaceTarget: FirmwareTarget | null = null;
+  let workspaceProfileLoadKey = "";
+  let workspaceProfileRequest = 0;
 
   onMount(() => {
     void (async () => {
@@ -163,7 +183,108 @@
   $: appUpdateLabel = $dashState.appUpdate?.update
     ? `ms-manager ${$dashState.appUpdate.update.version}`
     : null;
-  $: activeBusy = $dashState.bridgeMutating || $dashState.installing || $dashState.flashing;
+  $: activeBusy =
+    $dashState.bridgeMutating || $dashState.installing || $dashState.flashing || buildingFirmware;
+  $: activeWorkspaceTarget =
+    activeInstance?.artifact_source === "workspace" ? activeInstance.target : null;
+  $: {
+    const nextKey = activeWorkspaceTarget ?? "";
+    if (nextKey !== workspaceProfileLoadKey) {
+      workspaceProfileLoadKey = nextKey;
+      if (activeWorkspaceTarget) {
+        void loadWorkspaceProfiles(activeWorkspaceTarget);
+      } else {
+        workspaceProfileRequest += 1;
+        workspaceProfiles = [];
+        workspaceProfileError = null;
+        workspaceProfilesLoading = false;
+      }
+    }
+  }
+  $: activeBuildProfileId = activeWorkspaceTarget
+    ? selectedBuildProfiles[activeWorkspaceTarget]
+    : "";
+  $: activeBuildProfile =
+    workspaceProfiles.find((profile) => profile.id === activeBuildProfileId) ?? null;
+  $: activeBuildProfileOptions = workspaceProfiles.map((profile) => ({
+    value: profile.id,
+    label: profile.id,
+  }));
+
+  async function loadWorkspaceProfiles(target: FirmwareTarget) {
+    const request = ++workspaceProfileRequest;
+    workspaceProfilesLoading = true;
+    workspaceProfileError = null;
+    workspaceProfiles = [];
+    activity.add("info", "flash", `discover firmware profiles target=${target}`);
+    try {
+      const profiles = await workspaceFirmwareProfiles(target);
+      if (request !== workspaceProfileRequest) return;
+      workspaceProfiles = profiles;
+      const current = selectedBuildProfiles[target];
+      const selected = profiles.some((profile) => profile.id === current)
+        ? current
+        : (profiles.find((profile) => profile.id === "dev") ?? profiles[0])?.id ?? "";
+      selectedBuildProfiles = { ...selectedBuildProfiles, [target]: selected };
+      activity.add("ok", "flash", `firmware profiles target=${target} count=${profiles.length}`);
+    } catch (error) {
+      if (request !== workspaceProfileRequest) return;
+      const value = error as { message?: string };
+      const message = typeof value?.message === "string" ? value.message : String(error);
+      workspaceProfiles = [];
+      workspaceProfileError = message;
+      activity.add("error", "flash", `firmware profile discovery failed: ${message}`, error);
+    } finally {
+      if (request === workspaceProfileRequest) {
+        workspaceProfilesLoading = false;
+      }
+    }
+  }
+
+  function setActiveBuildProfile(profile: string) {
+    if (!activeWorkspaceTarget) return;
+    selectedBuildProfiles = { ...selectedBuildProfiles, [activeWorkspaceTarget]: profile };
+    workspaceProfileError = null;
+  }
+
+  async function buildActiveFirmware() {
+    if (!activeWorkspaceTarget || !activeBuildProfileId) return;
+
+    const target = activeWorkspaceTarget;
+    const profileId = activeBuildProfileId;
+    buildingFirmware = true;
+    workspaceProfileError = null;
+    activity.add("info", "flash", `firmware build start target=${target} profile=${profileId}`);
+    try {
+      const profile = await buildWorkspaceFirmware(target, profileId);
+      if (activeWorkspaceTarget === target) {
+        workspaceProfiles = workspaceProfiles.map((candidate) =>
+          candidate.id === profile.id ? profile : candidate,
+        );
+      }
+      activity.add("ok", "flash", `firmware build complete target=${target} profile=${profileId}`);
+    } catch (error) {
+      const value = error as { message?: string };
+      const message = typeof value?.message === "string" ? value.message : String(error);
+      if (activeWorkspaceTarget === target) {
+        workspaceProfileError = message;
+      }
+      activity.add("error", "flash", `firmware build failed: ${message}`, error);
+    } finally {
+      buildingFirmware = false;
+    }
+  }
+
+  async function flashActiveFirmware() {
+    if (!activeInstance) return;
+
+    const target = activeInstance.artifact_source === "workspace" ? activeInstance.target : null;
+    const profileId = target ? activeBuildProfile?.id : null;
+    await dash.flashInstance(activeInstance.instance_id, profileId);
+    if (target && activeWorkspaceTarget === target) {
+      await loadWorkspaceProfiles(target);
+    }
+  }
 
   async function copyActivity(entries: ActivityEntry[], filter: ActivityFilter) {
     const visible = entries.filter((e) => matchesActivityFilter(e, filter));
@@ -183,6 +304,18 @@
       const err = e as { code?: string; message?: string };
       const msg = typeof err?.message === "string" ? err.message : String(e);
       activity.add("warn", "ui", `open folder failed: ${msg}`, e);
+    }
+  }
+
+  async function copyArtifactFile(path?: string | null) {
+    if (!path) return;
+    try {
+      await fileCopyToClipboard(path);
+      activity.add("ok", "flash", "firmware file copied to clipboard");
+    } catch (e) {
+      const err = e as { message?: string };
+      const message = typeof err?.message === "string" ? err.message : String(e);
+      activity.add("warn", "flash", `copy firmware failed: ${message}`, e);
     }
   }
 
@@ -339,7 +472,8 @@
     !!activeInstance &&
     (
       activeInstance.artifact_source === "workspace"
-        ? activeInstance.artifacts_ready
+        ? !!activeBuildProfile &&
+          !workspaceProfilesLoading
         : installedSelectionReady
     );
   $: needsDownloadActiveInstance =
@@ -354,6 +488,7 @@
         installedTag: $dashState.installed?.tag ?? null,
         installedChannel: activeInstance.installed_channel,
         installedReady: installedSelectionReady,
+        buildProfile: activeBuildProfile?.id ?? null,
       })
     : "-";
   $: activeErrorMessage = $dashState.error?.message ?? null;
@@ -454,6 +589,17 @@
               loadingTags={$dashState.loadingTags}
               {activeTagValue}
               {activeTagOptions}
+              loadingBuildProfiles={workspaceProfilesLoading}
+              buildProfileOptions={activeBuildProfileOptions}
+              selectedBuildProfile={activeBuildProfileId}
+              developmentSourcePath={activeBuildProfile?.source_path ?? null}
+              developmentArtifactPath={activeBuildProfile?.artifact_path ?? null}
+              artifactReady={activeBuildProfile?.artifact_ready ?? false}
+              artifactBuiltAtMs={activeBuildProfile?.artifact_built_at_ms ?? null}
+              sourceDirty={activeBuildProfile?.source_dirty ?? false}
+              canCopyArtifact={$dashState.platform?.os === "windows"}
+              building={buildingFirmware}
+              profileError={workspaceProfileError}
               needsDownload={needsDownloadActiveInstance}
               canFlash={canFlashActiveInstance}
               flashing={$dashState.flashing && $dashState.flashingInstanceId === activeInstance.instance_id}
@@ -463,11 +609,20 @@
               flashNotice={activeFlashNotice}
               onEnvironmentChange={setActiveInstanceEnvironment}
               onTargetChange={setActiveInstanceTarget}
-              onOpenFolder={() => openSourcePath(activeInstance.artifact_location_path)}
+              onBuildProfileChange={setActiveBuildProfile}
+              onBuild={buildActiveFirmware}
+              onOpenSourceFolder={() => openSourcePath(activeBuildProfile?.source_path)}
+              onOpenArtifactFolder={() =>
+                openSourcePath(
+                  activeInstance.artifact_source === "workspace"
+                    ? activeBuildProfile?.artifact_path
+                    : activeInstance.artifact_location_path,
+                )}
+              onCopyArtifact={() => copyArtifactFile(activeBuildProfile?.artifact_path)}
               onChannelChange={setActiveInstanceChannel}
               onTagChange={setActiveInstanceTag}
               onDownload={() => dash.installForBridgeInstance(activeInstance.instance_id)}
-              onFlash={() => dash.flashInstance(activeInstance.instance_id)}
+              onFlash={flashActiveFirmware}
             />
           {:else}
             <InstanceStorageCard instance={activeInstance} disabled={activeBusy || !activeInstance.serial_open} />
@@ -522,7 +677,7 @@
 <style>
   .page {
     height: 100vh;
-    padding: var(--space-5);
+    padding: var(--space-4);
     display: grid;
     grid-template-rows: auto 1fr auto;
     gap: var(--space-4);
@@ -543,10 +698,10 @@
   }
 
   .panelBody {
-    padding: var(--space-5);
+    padding: var(--space-4);
     overflow: auto;
     display: grid;
-    gap: var(--space-5);
+    gap: var(--space-4);
     min-height: 0;
   }
 
@@ -575,6 +730,22 @@
     letter-spacing: 0.06em;
     text-transform: uppercase;
     padding: 6px 12px;
+    transition: 120ms ease;
+    transition-property: color, border-color, background-color, transform;
+  }
+
+  .sectionTabs button:hover:not(.active) {
+    color: var(--fg);
+    background: color-mix(in srgb, var(--fg) 5%, transparent);
+  }
+
+  .sectionTabs button:active {
+    transform: translateY(1px);
+  }
+
+  .sectionTabs button:focus-visible {
+    outline: 2px solid var(--value);
+    outline-offset: 2px;
   }
 
   .sectionTabs button.active {

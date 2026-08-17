@@ -93,6 +93,7 @@
       class="resizeHandle"
       type="button"
       aria-label="Resize activity panel"
+      title="Drag to resize activity panel"
       onmousedown={onResizeStart}
     ></button>
   {/if}
@@ -163,7 +164,7 @@
   .wrap {
     position: relative;
     border: 1px solid var(--border);
-    border-radius: 6px;
+    border-radius: var(--radius-panel);
     background: var(--panel);
     overflow: hidden;
     display: flex;
@@ -177,13 +178,41 @@
   }
 
   .resizeHandle {
-    position: absolute;
-    inset: 0 0 auto 0;
-    height: 10px;
+    position: relative;
+    width: 100%;
+    height: 12px;
+    flex: 0 0 12px;
+    padding: 0;
     border: 0;
     background: transparent;
     cursor: ns-resize;
     z-index: 2;
+  }
+
+  .resizeHandle::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 4px;
+    width: 40px;
+    height: 3px;
+    border-radius: 999px;
+    background: var(--border-strong);
+    opacity: 0.32;
+    transform: translateX(-50%);
+    transition: 120ms ease;
+    transition-property: width, background-color, opacity;
+  }
+
+  .resizeHandle:hover::after,
+  .resizeHandle:focus-visible::after {
+    width: 56px;
+    background: var(--value);
+    opacity: 0.9;
+  }
+
+  .resizeHandle:focus-visible {
+    outline: none;
   }
 
   .toggle {
@@ -193,7 +222,7 @@
     width: 100%;
     appearance: none;
     font: inherit;
-    padding: 10px 12px;
+    padding: var(--space-3) var(--space-4);
     border: 0;
     background: transparent;
     color: var(--muted);
@@ -228,10 +257,10 @@
   }
 
   .bar {
-    padding: 10px 12px;
+    padding: var(--space-3) var(--space-4);
     display: flex;
     justify-content: space-between;
-    gap: 12px;
+    gap: var(--space-3);
     align-items: center;
     border-bottom: 1px solid var(--border);
     flex: 0 0 auto;
@@ -240,15 +269,15 @@
   .filters {
     display: inline-flex;
     flex-wrap: wrap;
-    gap: 8px;
+    gap: var(--space-2);
   }
 
   .filters button,
   .tools button {
     appearance: none;
     font: inherit;
-    padding: 6px 8px;
-    border-radius: 6px;
+    padding: var(--space-1) var(--space-2);
+    border-radius: var(--control-radius);
     border: 1px solid var(--border);
     background: transparent;
     color: var(--muted);
@@ -271,14 +300,14 @@
 
   .tools {
     display: inline-flex;
-    gap: 8px;
+    gap: var(--space-2);
   }
 
   .log {
     flex: 1 1 auto;
     min-height: 0;
     overflow: auto;
-    padding: 10px 12px;
+    padding: var(--space-3) var(--space-4);
     scrollbar-gutter: stable;
     background:
       linear-gradient(
@@ -293,7 +322,7 @@
     width: max-content;
     display: grid;
     align-content: start;
-    gap: 6px;
+    gap: var(--space-1);
   }
 
   .empty {

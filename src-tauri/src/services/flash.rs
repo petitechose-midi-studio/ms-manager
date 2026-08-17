@@ -65,11 +65,18 @@ pub async fn flash_firmware_for_binding(
     layout: &PayloadLayout,
     installed: Option<&InstallState>,
     binding: &BridgeInstanceBinding,
+    firmware_override: Option<(std::path::PathBuf, String)>,
 ) -> ApiResult<LastFlashed> {
     let loader = artifact_resolver::resolve_loader_exe_for_binding(layout, binding)
         .map_err(|error| make_actionable_flash_error(error, binding))?;
-    let firmware = artifact_resolver::resolve_firmware_for_binding(layout, installed, binding)
-        .map_err(|error| make_actionable_flash_error(error, binding))?;
+    let (firmware, build_profile) = match firmware_override {
+        Some((firmware, build_profile)) => (firmware, Some(build_profile)),
+        None => (
+            artifact_resolver::resolve_firmware_for_binding(layout, installed, binding)
+                .map_err(|error| make_actionable_flash_error(error, binding))?,
+            None,
+        ),
+    };
     let device_target = resolve_flash_target(&loader, binding)
         .await
         .map_err(|error| make_actionable_flash_error(error, binding))?;
@@ -200,6 +207,7 @@ pub async fn flash_firmware_for_binding(
         channel,
         tag,
         profile,
+        build_profile,
         flashed_at_ms: now_ms(),
     })
 }
@@ -551,7 +559,7 @@ fn artifact_missing_actions(binding: &BridgeInstanceBinding) -> Vec<&'static str
     }
 }
 
-fn emit_flash_message(
+pub fn emit_flash_message(
     app: &tauri::AppHandle,
     level: FlashMessageLevel,
     message: impl Into<String>,
@@ -563,6 +571,10 @@ fn emit_flash_message(
             message: message.into(),
         },
     );
+}
+
+pub fn emit_flash_done(app: &tauri::AppHandle, ok: bool) {
+    let _ = app.emit(FLASH_EVENT, FlashEvent::Done { ok });
 }
 
 async fn run_bridge_control_action(

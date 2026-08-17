@@ -15,7 +15,18 @@
 
 <header class="bar">
   <div class="title">
-    <span class="app">MIDI Studio Manager</span>
+    <span class="brand">
+      <svg class="appMark" viewBox="0 0 24 24" aria-hidden="true">
+        <path
+          d="M5 21V8.5A5.5 5.5 0 0 1 10.5 3H14a5.5 5.5 0 0 1 5.5 5.5v.75A5.75 5.75 0 0 1 13.75 15c-1.5 0-2.95.25-4.25.75"
+        ></path>
+        <circle cx="12.3" cy="8.6" r="2.05"></circle>
+      </svg>
+      <span class="brandCopy">
+        <span class="app">MIDI Studio Manager</span>
+        <span class="maker">petitechose.audio</span>
+      </span>
+    </span>
     <MidiInventoryOverviewBadge
       inventory={midiInventory}
       loading={loadingMidiInventory}
@@ -58,10 +69,50 @@
   }
 
   .app {
+    display: block;
     font-weight: 700;
-    letter-spacing: 0.08em;
+    font-size: 15px;
+    line-height: 17px;
+    letter-spacing: 0.07em;
     text-transform: uppercase;
-    color: var(--value);
+    color: var(--fg);
+  }
+
+  .maker {
+    display: block;
+    color: var(--muted);
+    font-size: 10px;
+    line-height: 12px;
+    letter-spacing: 0.02em;
+  }
+
+  .brand {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    white-space: nowrap;
+  }
+
+  .appMark {
+    width: 30px;
+    height: 30px;
+    display: block;
+    flex: 0 0 auto;
+    color: var(--fg);
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 3.2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  .appMark circle {
+    fill: var(--brand);
+    stroke: none;
+  }
+
+  .brandCopy {
+    display: block;
   }
 
   .title {
@@ -82,8 +133,8 @@
   .badge {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
-    padding: 5px 8px;
+    gap: var(--space-2);
+    padding: var(--pill-padding-y) var(--pill-padding-x);
     border-radius: 999px;
     border: 1px solid var(--border);
     background: rgba(0, 0, 0, 0.06);

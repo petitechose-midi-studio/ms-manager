@@ -46,41 +46,43 @@
   :global(:root) {
     color-scheme: dark;
 
-    --bg: #0c0f14;
-    --panel: #11151c;
-    --fg: #d9dde3;
-    --muted: #9aa3ad;
-    --border: #2b313a;
-    --border-strong: #3b4350;
-    --value: #bfc6d1;
-    --ok: #3fd07f;
-    --warn: #d7b35b;
-    --err: #e16b6b;
-    --log-rx: #57c7ff;
-    --log-tx: #3fd07f;
-    --log-system: #d9b85c;
-    --log-info: #7dcfff;
-    --log-source: #c58cff;
-    --log-row-hover: #171d27;
+    --bg: #090909;
+    --panel: #0e0e0f;
+    --panel-elevated: #151516;
+    --fg: #e8e8ea;
+    --muted: #96969c;
+    --border: #29292c;
+    --border-strong: #3b3b40;
+    --value: #d3d3d7;
+    --brand: #f51b4b;
+    --ok: #49e4b0;
+    --warn: #ffa51a;
+    --err: #ff5c72;
+    --log-rx: #7fa7c7;
+    --log-tx: #49e4b0;
+    --log-system: #ffa51a;
+    --log-info: #9ab6cc;
+    --log-source: #b69ad9;
+    --log-row-hover: #151516;
 
     --font-mono: "JetBrainsMono Nerd Font Mono", "IBM Plex Mono", ui-monospace, SFMono-Regular,
       Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
     --font-log: var(--font-mono);
     --font-sans: "Aptos", "Segoe UI Variable Text", "Segoe UI", Arial, sans-serif;
 
-    --space-1: 6px;
+    --space-1: 4px;
     --space-2: 8px;
-    --space-3: 10px;
-    --space-4: 12px;
-    --space-5: 14px;
-    --radius-panel: 6px;
+    --space-3: 12px;
+    --space-4: 16px;
+    --space-5: 24px;
+    --radius-panel: 8px;
     --radius-card: 8px;
     --tabs-strip-height: 78px;
     --control-height: 40px;
     --control-radius: 6px;
-    --control-padding-x: 10px;
+    --control-padding-x: 12px;
     --pill-padding-y: 4px;
-    --pill-padding-x: 10px;
+    --pill-padding-x: 8px;
 
     font-size: 15px;
     line-height: 22px;
@@ -92,22 +94,24 @@
   :global(:root[data-theme="light"]) {
     color-scheme: light;
 
-    --bg: #f6f7f8;
+    --bg: #f4f4f3;
     --panel: #ffffff;
-    --fg: #10131a;
-    --muted: #475569;
-    --border: #d1d5db;
-    --border-strong: #9ca3af;
-    --value: #0f172a;
-    --ok: #0a7f41;
-    --warn: #8a6a0b;
-    --err: #b42318;
-    --log-rx: #0b6ccf;
-    --log-tx: #0a7f41;
-    --log-system: #9a6700;
-    --log-info: #155eef;
-    --log-source: #7a3ef0;
-    --log-row-hover: #eef2f7;
+    --panel-elevated: #ececed;
+    --fg: #18181a;
+    --muted: #606066;
+    --border: #d3d3d5;
+    --border-strong: #aaaab0;
+    --value: #2b2b2e;
+    --brand: #d90f3e;
+    --ok: #087a55;
+    --warn: #8a5700;
+    --err: #bd2444;
+    --log-rx: #416c8d;
+    --log-tx: #087a55;
+    --log-system: #8a5700;
+    --log-info: #416c8d;
+    --log-source: #72529a;
+    --log-row-hover: #ececed;
   }
 
   :global(body) {

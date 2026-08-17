@@ -99,8 +99,6 @@
     onmouseleave={scheduleClose}
     onfocus={(event) => openPopover(event.currentTarget as HTMLElement)}
     onblur={scheduleClose}
-    onpointerdown={stop}
-    onclick={stop}
   >
     <span class="midiDot" aria-hidden="true"></span>
     <span class="midiLabel">{summary}</span>
@@ -111,6 +109,7 @@
     class:open
     style={popoverStyle}
     role="tooltip"
+    data-tab-interaction="ignore"
     onmouseenter={cancelClose}
     onmouseleave={scheduleClose}
   >
@@ -175,7 +174,7 @@
     font-weight: 700;
     letter-spacing: 0.04em;
     text-transform: uppercase;
-    cursor: default;
+    cursor: inherit;
   }
 
   .midiWrap.warn .midiTrigger {
@@ -202,6 +201,7 @@
     box-shadow: 0 12px 30px rgba(0, 0, 0, 0.25);
     display: none;
     gap: 8px;
+    cursor: default;
   }
 
   .midiPopover.open {

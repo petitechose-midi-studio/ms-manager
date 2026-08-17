@@ -149,6 +149,8 @@
 
   .trigger {
     border: 1px solid var(--border);
+    transition: 120ms ease;
+    transition-property: border-color, background-color, color;
   }
 
   .trigger {
@@ -162,6 +164,16 @@
   .trigger:disabled {
     opacity: 0.55;
     cursor: not-allowed;
+  }
+
+  .trigger:hover:not(:disabled) {
+    border-color: var(--border-strong);
+  }
+
+  .trigger:focus-visible,
+  .item:focus-visible {
+    outline: 2px solid var(--value);
+    outline-offset: 2px;
   }
 
   .currentIcon,
@@ -229,11 +241,8 @@
     gap: var(--space-2);
     text-align: left;
     color: color-mix(in srgb, var(--fg) 68%, transparent);
-    transition:
-      border-color 180ms ease,
-      color 180ms ease,
-      background-color 180ms ease,
-      box-shadow 180ms ease;
+    transition: 120ms ease;
+    transition-property: border-color, color, background-color, box-shadow;
   }
 
   .item.selected {

@@ -22,7 +22,17 @@ export type LastFlashed = {
   channel: Channel;
   tag: string;
   profile: string;
+  build_profile?: string | null;
   flashed_at_ms: number;
+};
+
+export type WorkspaceFirmwareProfile = {
+  id: string;
+  source_path: string;
+  artifact_path: string;
+  artifact_ready: boolean;
+  artifact_built_at_ms?: number | null;
+  source_dirty: boolean;
 };
 
 export type DeviceStatus = {

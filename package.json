@@ -1,7 +1,7 @@
 {
   "name": "ms-manager",
   "version": "0.1.4-beta.1",
-  "description": "",
+  "description": "Development, firmware, and device manager for MIDI Studio.",
   "type": "module",
   "engines": {
     "node": ">=20 <23"
