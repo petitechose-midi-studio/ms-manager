@@ -143,10 +143,12 @@ jobs:
             args: "--target x86_64-apple-darwin --bundles dmg"
             artifact_name: ms-manager-macos-x86_64
             macos_arch: x86_64
+            apple_signing_identity: "-"
           - platform: macos-latest
             args: "--target aarch64-apple-darwin --bundles dmg"
             artifact_name: ms-manager-macos-arm64
             macos_arch: arm64
+            apple_signing_identity: "-"
 
     steps:
       - name: Checkout source SHA
@@ -212,6 +214,8 @@ jobs:
         run: npm ci --include=optional --no-audit --no-fund
 
       - name: Build candidate packages
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ matrix.apple_signing_identity }}
         run: npm run tauri -- build ${{ matrix.args }}
 
       - name: Collect candidate packages
