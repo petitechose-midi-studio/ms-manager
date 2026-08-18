@@ -2143,7 +2143,7 @@ dependencies = [
 
 [[package]]
 name = "ms-manager"
-version = "0.1.4-beta.2"
+version = "0.1.4-beta.3"
 dependencies = [
  "chrono",
  "clipboard-win",
