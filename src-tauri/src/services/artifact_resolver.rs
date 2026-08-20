@@ -5,8 +5,7 @@ use ms_manager_core::{ArtifactSource, BridgeInstanceBinding, FirmwareTarget, Ins
 use crate::api_error::{ApiError, ApiResult};
 use crate::layout::PayloadLayout;
 use crate::services::artifact_paths::{
-    dev_artifacts_path as local_dev_artifacts_path, ensure_file_exists,
-    ui_path_string as format_ui_path_string,
+    dev_artifacts_path, ensure_file_exists, ui_path_string as format_ui_path_string,
 };
 use crate::services::installed_artifacts::{
     installed_artifact_health, installed_artifact_health_for_binding, installed_core_file_tool_exe,
@@ -32,7 +31,15 @@ pub fn management_artifact_health(
     layout: &PayloadLayout,
     installed: Option<&InstallState>,
 ) -> ArtifactHealth {
-    if local_dev_artifacts_path().exists() {
+    management_artifact_health_for_config(layout, installed, dev_artifacts_path().exists())
+}
+
+fn management_artifact_health_for_config(
+    layout: &PayloadLayout,
+    installed: Option<&InstallState>,
+    workspace_config_exists: bool,
+) -> ArtifactHealth {
+    if workspace_config_exists {
         return workspace_artifact_health();
     }
 
@@ -176,13 +183,13 @@ pub fn artifact_location_for_binding(
             })
             .map(|path| std::fs::canonicalize(&path).unwrap_or(path))
             .unwrap_or_else(|| {
-                local_dev_artifacts_path()
+                dev_artifacts_path()
                     .parent()
                     .map(|parent| {
                         let path = parent.to_path_buf();
                         std::fs::canonicalize(&path).unwrap_or(path)
                     })
-                    .unwrap_or_else(local_dev_artifacts_path)
+                    .unwrap_or_else(dev_artifacts_path)
             }),
     }
 }
@@ -232,7 +239,7 @@ mod tests {
     #[test]
     fn installed_health_is_not_ready_without_payload() {
         let layout = PayloadLayout::resolve(Some("C:\\missing-payload-root")).unwrap();
-        let status = management_artifact_health(&layout, None);
+        let status = management_artifact_health_for_config(&layout, None, false);
         assert_eq!(status.source, ArtifactSource::Installed);
         assert!(!status.ready);
     }

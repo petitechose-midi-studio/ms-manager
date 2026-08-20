@@ -27,6 +27,19 @@ npm install
 npm run tauri dev
 ```
 
+When `ms-manager` is part of an `ms-dev-env` maintainer workspace, this command generates the
+active, platform-specific artifact map at `ms-manager/dev-artifacts.json`:
+
+```bash
+uv run ms sync --repos --profile maintainer
+```
+
+The generated file is ignored by Git and its paths are relative to `ms-manager`. Development builds
+export bridge, firmware, and Bitwig artifacts under the workspace `bin/` directory; loader and core
+file-tool paths point to their native build outputs. To override any path on one machine, create
+`dev-artifacts.local.json` with the same schema. The local file is also ignored and takes precedence
+over the generated file.
+
 ## UX Recordings
 
 `ms-manager` archives semantic UX recorder lines emitted by validation firmware builds.

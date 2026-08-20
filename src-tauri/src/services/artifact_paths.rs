@@ -3,10 +3,20 @@ use std::path::{Path, PathBuf};
 use crate::api_error::{ApiError, ApiResult};
 
 pub fn dev_artifacts_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+    let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("src-tauri should have a repo root parent")
-        .join("dev-artifacts.local.json")
+        .to_path_buf();
+    dev_artifacts_path_from_root(&repo_root)
+}
+
+fn dev_artifacts_path_from_root(repo_root: &Path) -> PathBuf {
+    let local = repo_root.join("dev-artifacts.local.json");
+    if local.exists() {
+        return local;
+    }
+
+    repo_root.join("dev-artifacts.json")
 }
 
 pub fn ensure_file_exists(key: &str, path: &Path) -> ApiResult<()> {
@@ -70,4 +80,45 @@ fn strip_windows_verbatim_prefix(path: &str) -> String {
     }
 
     path.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn unique_test_dir(label: &str) -> PathBuf {
+        let suffix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir().join(format!("ms-manager-{label}-{suffix}"))
+    }
+
+    #[test]
+    fn generated_config_is_the_default() {
+        let root = unique_test_dir("generated-artifact-path");
+        std::fs::create_dir_all(&root).unwrap();
+
+        assert_eq!(
+            dev_artifacts_path_from_root(&root),
+            root.join("dev-artifacts.json")
+        );
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn local_config_overrides_generated_config() {
+        let root = unique_test_dir("local-artifact-path");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(root.join("dev-artifacts.json"), "{}").unwrap();
+        std::fs::write(root.join("dev-artifacts.local.json"), "{}").unwrap();
+
+        assert_eq!(
+            dev_artifacts_path_from_root(&root),
+            root.join("dev-artifacts.local.json")
+        );
+
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }
