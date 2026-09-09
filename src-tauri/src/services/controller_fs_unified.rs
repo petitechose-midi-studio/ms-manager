@@ -39,7 +39,7 @@ pub struct Capabilities {
 
 pub struct Client {
     bridge: BridgeBinaryClient,
-    sequence: u16,
+    sequence: u64,
 }
 impl Client {
     pub fn new(bridge: BridgeBinaryClient) -> Self {
@@ -73,7 +73,7 @@ impl Client {
         delay: u32,
         replay_on_loss: bool,
     ) -> Result<Vec<u8>, Failure> {
-        self.sequence = self.sequence.wrapping_add(1).max(1);
+        self.sequence = self.sequence.checked_add(1).ok_or(Failure::Protocol)?;
         let mut frame = Frame {
             operation,
             state: State::Request,
@@ -97,7 +97,7 @@ impl Client {
             Err(_) if replay_on_loss => {
                 replayed = true;
                 // Keep operation identity, but retire the timed-out transport waiter.
-                self.sequence = self.sequence.wrapping_add(1).max(1);
+                self.sequence = self.sequence.checked_add(1).ok_or(Failure::Protocol)?;
                 frame.request_id = self.sequence;
                 let mut bytes = vec![0; wire::HEADER + body.len()];
                 wire::encode(frame, &mut bytes).ok_or(Failure::Protocol)?;
@@ -399,7 +399,7 @@ impl Client {
             let mut body = prefix.clone();
             body.extend_from_slice(&(offset + done).to_le_bytes());
             body.extend_from_slice(&count.to_le_bytes());
-            self.sequence = self.sequence.wrapping_add(1).max(1);
+            self.sequence = self.sequence.checked_add(1).ok_or(Failure::Protocol)?;
             let frame = Frame {
                 operation: Operation::Read,
                 state: State::Request,
