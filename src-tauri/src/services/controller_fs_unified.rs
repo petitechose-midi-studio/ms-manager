@@ -105,7 +105,7 @@ impl Client {
         let mask = u32::from_le_bytes(frame.body[..4].try_into().unwrap());
         let chunk = u32::from_le_bytes(frame.body[4..8].try_into().unwrap());
         let max_upload = u32::from_le_bytes(frame.body[8..12].try_into().unwrap());
-        if mask & 0x60ff != 0x60ff || chunk < 30_720 || max_upload < 524_288 {
+        if mask & 0x67ff != 0x67ff || chunk < 30_720 || max_upload < 524_288 {
             return Err(Failure::Protocol);
         }
         Ok(())
@@ -155,27 +155,46 @@ impl Client {
                 return Err(Failure::Protocol);
             }
         }
-        let started = tokio::time::Instant::now();
-        let mut response = match self
-            .request(
-                Operation::UploadCommit,
-                &session.to_le_bytes(),
-                nonce,
-                0,
-                10_000,
-                true,
-            )
+        let result = self
+            .mutation(Operation::UploadCommit, &session.to_le_bytes(), nonce)
+            .await;
+        // Abort only addresses this upload and cannot cancel an admitted commit.
+        if result.is_err() {
+            self.abort(session).await;
+        }
+        result
+    }
+
+    pub async fn mkdir(&mut self, path: &str, nonce: u32) -> Result<(), Failure> {
+        self.capabilities().await?;
+        self.mutation(Operation::Mkdir, &path_body(path)?, nonce)
             .await
-        {
-            Ok(response) => response,
-            Err(error) => {
-                // Abort only addresses this upload and cannot cancel a pending
-                // commit. Release staging after rejection without masking an
-                // ambiguous result if the commit may already have executed.
-                self.abort(session).await;
-                return Err(error);
-            }
-        };
+    }
+
+    pub async fn rename(&mut self, from: &str, to: &str, nonce: u32) -> Result<(), Failure> {
+        self.capabilities().await?;
+        let mut body = path_body(from)?;
+        body.extend(path_body(to)?);
+        self.mutation(Operation::Rename, &body, nonce).await
+    }
+
+    pub async fn delete(&mut self, path: &str, recursive: bool, nonce: u32) -> Result<(), Failure> {
+        self.capabilities().await?;
+        let mut body = path_body(path)?;
+        body.push(u8::from(recursive));
+        self.mutation(Operation::Delete, &body, nonce).await
+    }
+
+    async fn mutation(
+        &mut self,
+        operation: Operation,
+        body: &[u8],
+        nonce: u32,
+    ) -> Result<(), Failure> {
+        let started = tokio::time::Instant::now();
+        let mut response = self
+            .request(operation, body, nonce, 0, 10_000, true)
+            .await?;
         loop {
             let frame = wire::decode(&response).ok_or(Failure::Protocol)?;
             if frame.state == State::Complete {
