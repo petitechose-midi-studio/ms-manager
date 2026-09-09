@@ -8,6 +8,7 @@ pub enum Failure {
     Transport(String),
     Protocol,
     Remote(Error),
+    Conditional(Error, ConditionalResult),
     Ambiguous,
 }
 
@@ -17,6 +18,13 @@ pub struct Entry {
     pub file_type: u8,
     pub size: u32,
     pub truncated: bool,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct ConditionalResult {
+    pub outcome: u8,
+    pub subject: u8,
+    pub observed: Option<[u8; 32]>,
 }
 
 pub struct Client {
@@ -105,7 +113,7 @@ impl Client {
         let mask = u32::from_le_bytes(frame.body[..4].try_into().unwrap());
         let chunk = u32::from_le_bytes(frame.body[4..8].try_into().unwrap());
         let max_upload = u32::from_le_bytes(frame.body[8..12].try_into().unwrap());
-        if mask & 0x67ff != 0x67ff || chunk < 30_720 || max_upload < 524_288 {
+        if mask & 0x7fff != 0x7fff || chunk < 30_720 || max_upload < 524_288 {
             return Err(Failure::Protocol);
         }
         Ok(())
@@ -191,6 +199,56 @@ impl Client {
         body: &[u8],
         nonce: u32,
     ) -> Result<(), Failure> {
+        let result = self.mutation_result(operation, body, nonce).await?;
+        if result.is_empty() {
+            Ok(())
+        } else {
+            Err(Failure::Protocol)
+        }
+    }
+
+    pub async fn conditional_replace(
+        &mut self,
+        path: &str,
+        staging: &str,
+        expected: &[u8; 32],
+        replacement: &[u8; 32],
+        nonce: u32,
+    ) -> Result<ConditionalResult, Failure> {
+        self.capabilities().await?;
+        let mut body = expected.to_vec();
+        body.extend_from_slice(replacement);
+        body.extend(path_body(path)?);
+        body.extend(path_body(staging)?);
+        conditional_result(
+            &self
+                .mutation_result(Operation::ConditionalReplace, &body, nonce)
+                .await?,
+        )
+    }
+
+    pub async fn conditional_delete(
+        &mut self,
+        path: &str,
+        expected: &[u8; 32],
+        nonce: u32,
+    ) -> Result<ConditionalResult, Failure> {
+        self.capabilities().await?;
+        let mut body = expected.to_vec();
+        body.extend(path_body(path)?);
+        conditional_result(
+            &self
+                .mutation_result(Operation::ConditionalDelete, &body, nonce)
+                .await?,
+        )
+    }
+
+    async fn mutation_result(
+        &mut self,
+        operation: Operation,
+        body: &[u8],
+        nonce: u32,
+    ) -> Result<Vec<u8>, Failure> {
         let started = tokio::time::Instant::now();
         let mut response = self
             .request(operation, body, nonce, 0, 10_000, true)
@@ -198,11 +256,7 @@ impl Client {
         loop {
             let frame = wire::decode(&response).ok_or(Failure::Protocol)?;
             if frame.state == State::Complete {
-                return if frame.body.is_empty() {
-                    Ok(())
-                } else {
-                    Err(Failure::Protocol)
-                };
+                return Ok(frame.body.to_vec());
             }
             if frame.state != State::Pending {
                 return Err(Failure::Protocol);
@@ -360,9 +414,35 @@ fn validate_response<'a>(
         return Err(Failure::Remote(Error::Conflict));
     }
     if decoded.state == State::Failed || decoded.state == State::Cancelled {
+        if !decoded.body.is_empty() {
+            return Err(Failure::Conditional(
+                decoded.error,
+                conditional_result(decoded.body)?,
+            ));
+        }
         return Err(Failure::Remote(decoded.error));
     }
     Ok(decoded)
+}
+
+fn conditional_result(body: &[u8]) -> Result<ConditionalResult, Failure> {
+    if body.len() != 35
+        || body[0] > 2
+        || body[1] > 2
+        || body[2] > 1
+        || (body[2] == 0 && body[3..].iter().any(|&b| b != 0))
+    {
+        return Err(Failure::Protocol);
+    }
+    Ok(ConditionalResult {
+        outcome: body[0],
+        subject: body[1],
+        observed: if body[2] != 0 {
+            Some(body[3..].try_into().unwrap())
+        } else {
+            None
+        },
+    })
 }
 
 fn take<'a>(body: &mut &'a [u8], count: usize) -> Result<&'a [u8], Failure> {
@@ -431,6 +511,35 @@ fn path_body(path: &str) -> Result<Vec<u8>, Failure> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn conditional_details_are_exact_and_canonical() {
+        let mut body = [0; 35];
+        body[0] = 1;
+        assert_eq!(
+            conditional_result(&body).unwrap(),
+            ConditionalResult {
+                outcome: 1,
+                subject: 0,
+                observed: None
+            }
+        );
+        for size in 0..35 {
+            assert!(conditional_result(&body[..size]).is_err());
+        }
+        for index in 0..3 {
+            let mut invalid = body;
+            invalid[index] = 3;
+            assert!(conditional_result(&invalid).is_err());
+        }
+        body[3] = 7;
+        assert!(conditional_result(&body).is_err());
+        body[2] = 1;
+        assert_eq!(conditional_result(&body).unwrap().observed.unwrap()[0], 7);
+        let mut trailing = body.to_vec();
+        trailing.push(0);
+        assert!(conditional_result(&trailing).is_err());
+    }
 
     #[test]
     fn listing_rejects_truncation_stale_identity_and_noncanonical_fields() {
