@@ -25,7 +25,7 @@ impl Client {
     pub async fn close(&mut self) {
         self.bridge.close().await;
     }
-    async fn abort(&mut self, session: u16) {
+    async fn abort(&mut self, session: u32) {
         let _ = self
             .request(
                 Operation::UploadAbort,
@@ -64,7 +64,7 @@ impl Client {
         let mut replayed = false;
         let response = match self
             .bridge
-            .controller_rpc(bytes.clone(), FsMessageId::JobResponse, 1000)
+            .controller_rpc(bytes, FsMessageId::JobResponse, 1000)
             .await
         {
             Ok(response) => response,
@@ -73,6 +73,7 @@ impl Client {
                 // Keep operation identity, but retire the timed-out transport waiter.
                 self.sequence = self.sequence.wrapping_add(1).max(1);
                 frame.request_id = self.sequence;
+                let mut bytes = vec![0; wire::HEADER + body.len()];
                 wire::encode(frame, &mut bytes).ok_or(Failure::Protocol)?;
                 self.bridge
                     .controller_rpc(bytes, FsMessageId::JobResponse, 1000)
@@ -116,30 +117,27 @@ impl Client {
         Ok(())
     }
 
-    /// Explicit session/nonce in R2 makes replay and collision cases reproducible.
-    pub async fn upload(
-        &mut self,
-        path: &str,
-        data: &[u8],
-        session: u16,
-        nonce: u32,
-    ) -> Result<(), Failure> {
+    /// Core assigns the upload identity; the caller retains the mutation nonce for retries.
+    pub async fn upload(&mut self, path: &str, data: &[u8], nonce: u32) -> Result<(), Failure> {
         self.capabilities().await?;
-        if session == 0 || nonce == 0 || data.len() > 524_288 {
+        if nonce == 0 || data.len() > 524_288 {
             return Err(Failure::Protocol);
         }
-        let mut begin = session.to_le_bytes().to_vec();
-        begin.extend_from_slice(&(data.len() as u32).to_le_bytes());
+        let mut begin = (data.len() as u32).to_le_bytes().to_vec();
         begin.extend_from_slice(&path_body(path)?);
-        if let Err(error) = self
+        let admitted = self
             .request(Operation::UploadBegin, &begin, 0, 0, 0, false)
-            .await
-        {
-            if !matches!(error, Failure::Remote(_)) {
-                self.abort(session).await;
-            }
-            return Err(error);
+            .await?;
+        let admitted = wire::decode(&admitted).ok_or(Failure::Protocol)?;
+        if admitted.state != State::Complete || admitted.body.len() != 4 {
+            return Err(Failure::Protocol);
         }
+        let session = u32::from_le_bytes(admitted.body.try_into().unwrap());
+        if session == 0 {
+            return Err(Failure::Protocol);
+        }
+        // If Begin's reply is lost, its identity is unknown: let Core expire the
+        // staging session. Guessing an Abort identity could cancel another upload.
         for (i, data) in data.chunks(30_720).enumerate() {
             let mut body = session.to_le_bytes().to_vec();
             body.extend_from_slice(&((i * 30_720) as u32).to_le_bytes());
@@ -164,7 +162,7 @@ impl Client {
             }
         }
         let started = tokio::time::Instant::now();
-        let mut response = self
+        let mut response = match self
             .request(
                 Operation::UploadCommit,
                 &session.to_le_bytes(),
@@ -173,7 +171,17 @@ impl Client {
                 10_000,
                 true,
             )
-            .await?;
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => {
+                // Abort only addresses this upload and cannot cancel a pending
+                // commit. Release staging after rejection without masking an
+                // ambiguous result if the commit may already have executed.
+                self.abort(session).await;
+                return Err(error);
+            }
+        };
         loop {
             let frame = wire::decode(&response).ok_or(Failure::Protocol)?;
             if frame.state == State::Complete {
