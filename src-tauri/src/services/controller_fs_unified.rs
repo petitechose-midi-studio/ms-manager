@@ -336,6 +336,7 @@ impl Client {
         nonce: u32,
     ) -> Result<Vec<u8>, Failure> {
         let started = tokio::time::Instant::now();
+        let deadline = started + Duration::from_secs(12);
         let mut response = self
             .request(operation, body, nonce, 0, 10_000, true)
             .await?;
@@ -348,13 +349,15 @@ impl Client {
                 return Err(Failure::Protocol);
             }
             let identity = frame.operation_id;
-            if started.elapsed() >= Duration::from_secs(12) {
+            let next_poll =
+                tokio::time::Instant::now() + poll_interval(started.elapsed(), frame.delay_ms);
+            tokio::time::sleep_until(next_poll.min(deadline)).await;
+            if tokio::time::Instant::now() >= deadline {
                 let _ = self
                     .request(Operation::Cancel, &[], nonce, identity, 0, false)
                     .await;
                 return Err(Failure::Ambiguous);
             }
-            tokio::time::sleep(Duration::from_millis(u64::from(frame.delay_ms))).await;
             response = self
                 .request(Operation::Poll, &[], nonce, identity, 0, true)
                 .await?;
@@ -488,6 +491,18 @@ impl Client {
     }
 }
 
+fn poll_interval(elapsed: Duration, server_delay_ms: u32) -> Duration {
+    // Preserve quick mutations; reduce status traffic for work lasting hundreds of ms.
+    // The server hint remains a minimum, including across a transport retry.
+    let local_ms = match elapsed.as_millis() {
+        0..=99 => 5,
+        100..=199 => 10,
+        200..=399 => 20,
+        _ => 40,
+    };
+    Duration::from_millis(u64::from(server_delay_ms.max(local_ms)))
+}
+
 fn validate_response<'a>(
     bytes: &'a [u8],
     request: Frame<'_>,
@@ -615,6 +630,211 @@ fn path_body(path: &str) -> Result<Vec<u8>, Failure> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn polling_preserves_short_operations_and_server_minimum() {
+        for elapsed in [0, 50, 99, 100, 199, 200, 399, 400, 10_000] {
+            let delay = poll_interval(Duration::from_millis(elapsed), 5);
+            assert!(delay >= Duration::from_millis(5));
+            assert!(delay <= Duration::from_millis(40));
+            if elapsed < 100 {
+                assert_eq!(delay, Duration::from_millis(5));
+            }
+            assert_eq!(
+                poll_interval(Duration::from_millis(elapsed), 250),
+                Duration::from_millis(250)
+            );
+        }
+        // A two-second operation must require far fewer polls than a fixed 5 ms loop.
+        let mut elapsed = Duration::ZERO;
+        let mut polls = 0;
+        while elapsed < Duration::from_secs(2) {
+            elapsed += poll_interval(elapsed, 5);
+            polls += 1;
+        }
+        assert!(polls < 100);
+        assert!(elapsed < Duration::from_millis(2040));
+    }
+
+    async fn test_request(stream: &mut tokio::net::TcpStream) -> ([u8; 16], Vec<u8>) {
+        let mut header = [0; 16];
+        stream.read_exact(&mut header).await.unwrap();
+        assert_eq!(&header[..4], b"OCRQ");
+        let length = u32::from_le_bytes(header[12..].try_into().unwrap()) as usize;
+        assert!(length <= wire::HEADER + wire::MAX_BODY);
+        let mut bytes = vec![0; length];
+        stream.read_exact(&mut bytes).await.unwrap();
+        (header, bytes)
+    }
+
+    async fn test_reply(
+        stream: &mut tokio::net::TcpStream,
+        header: [u8; 16],
+        mut frame: Frame<'_>,
+        state: State,
+        error: Error,
+        delay_ms: u32,
+    ) {
+        use tokio::io::AsyncWriteExt;
+        frame.state = state;
+        frame.error = error;
+        frame.operation_id = 7;
+        frame.delay_ms = delay_ms;
+        frame.body = &[];
+        let mut payload = vec![0; wire::HEADER];
+        wire::encode(frame, &mut payload).unwrap();
+        let mut reply = b"OCRS".to_vec();
+        reply.extend([1, 0]);
+        reply.extend(&header[6..8]);
+        reply.extend((payload.len() as u32).to_le_bytes());
+        reply.extend([0; 4]);
+        reply.extend(payload);
+        stream.write_all(&reply).await.unwrap();
+    }
+
+    #[test]
+    fn progressive_polling_survives_reconnect_and_preserves_terminal_outcomes() {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                for (state, error) in [
+                    (State::Complete, Error::None),
+                    (State::Failed, Error::DeadlineExceeded),
+                    (State::Cancelled, Error::Cancelled),
+                    (State::Failed, Error::ResultExpired),
+                    (State::Failed, Error::LifetimeChanged),
+                ] {
+                    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+                        .await
+                        .unwrap();
+                    let port = listener.local_addr().unwrap().port();
+                    let server = tokio::spawn(async move {
+                        let (mut stream, _) = listener.accept().await.unwrap();
+                        let start = tokio::time::Instant::now();
+                        let mut polls = 0;
+                        let mut sequence = 0;
+                        loop {
+                            let (header, bytes) = test_request(&mut stream).await;
+                            let frame = wire::decode(&bytes).unwrap();
+                            assert_eq!((frame.nonce, frame.lifetime), (99, 11));
+                            assert!(frame.request_id > sequence);
+                            if sequence == 0 {
+                                assert_eq!(
+                                    (frame.operation, frame.operation_id),
+                                    (Operation::Mkdir, 0)
+                                );
+                            } else {
+                                assert_eq!(
+                                    (frame.operation, frame.operation_id),
+                                    (Operation::Poll, 7)
+                                );
+                                polls += 1;
+                            }
+                            sequence = frame.request_id;
+                            if polls == 2 {
+                                // Lose a pending result and force a new TCP connection.
+                                drop(stream);
+                                stream = listener.accept().await.unwrap().0;
+                                continue;
+                            }
+                            if start.elapsed() >= Duration::from_millis(450) {
+                                test_reply(&mut stream, header, frame, state, error, 0).await;
+                                assert!(polls < 50, "{polls} polls");
+                                break;
+                            }
+                            test_reply(&mut stream, header, frame, State::Pending, Error::None, 5)
+                                .await;
+                        }
+                    });
+                    let mut client = Client::new(BridgeBinaryClient::new(port));
+                    client.lifetime = 11;
+                    let result = tokio::time::timeout(
+                        Duration::from_secs(5),
+                        client.mutation(Operation::Mkdir, &path_body("projects/poll").unwrap(), 99),
+                    )
+                    .await
+                    .unwrap();
+                    match error {
+                        Error::None => assert!(result.is_ok()),
+                        Error::LifetimeChanged => {
+                            assert!(matches!(result, Err(Failure::Ambiguous)))
+                        }
+                        expected => assert!(
+                            matches!(result, Err(Failure::Remote(actual)) if actual == expected)
+                        ),
+                    }
+                    server.await.unwrap();
+                }
+            });
+    }
+
+    #[test]
+    fn server_wait_cannot_postpone_cancellation_past_local_deadline() {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+                    .await
+                    .unwrap();
+                let port = listener.local_addr().unwrap().port();
+                let server = tokio::spawn(async move {
+                    let (mut stream, _) = listener.accept().await.unwrap();
+                    let start = tokio::time::Instant::now();
+                    for operation in [Operation::Mkdir, Operation::Poll, Operation::Cancel] {
+                        let (header, bytes) = test_request(&mut stream).await;
+                        let frame = wire::decode(&bytes).unwrap();
+                        assert_eq!(
+                            (frame.operation, frame.nonce, frame.lifetime),
+                            (operation, 99, 11)
+                        );
+                        assert_eq!(
+                            frame.operation_id,
+                            if operation == Operation::Mkdir { 0 } else { 7 }
+                        );
+                        if operation == Operation::Cancel {
+                            assert!(start.elapsed() >= Duration::from_millis(11_900));
+                            test_reply(
+                                &mut stream,
+                                header,
+                                frame,
+                                State::Failed,
+                                Error::CancelTooLate,
+                                0,
+                            )
+                            .await;
+                        } else {
+                            test_reply(
+                                &mut stream,
+                                header,
+                                frame,
+                                State::Pending,
+                                Error::None,
+                                10_000,
+                            )
+                            .await;
+                        }
+                    }
+                });
+                let mut client = Client::new(BridgeBinaryClient::new(port));
+                client.lifetime = 11;
+                let result = tokio::time::timeout(
+                    Duration::from_secs(15),
+                    client.mutation(
+                        Operation::Mkdir,
+                        &path_body("projects/deadline").unwrap(),
+                        99,
+                    ),
+                )
+                .await
+                .unwrap();
+                assert!(matches!(result, Err(Failure::Ambiguous)));
+                server.await.unwrap();
+            });
+    }
 
     #[test]
     fn reboot_during_mutation_pins_retry_abort_and_renegotiation_to_old_lifetime() {
