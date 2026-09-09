@@ -337,13 +337,12 @@ export type BridgeLogEvent = {
 export type ControllerFsFileType = "missing" | "file" | "directory" | "other";
 
 export type ControllerFsCapabilities = {
-  status: string;
-  rpc_schema: number;
+  protocol_version: number;
   max_chunk_size: number;
-  response_buffer_size: number;
+  max_upload_size: number;
   max_list_entries: number;
   max_path_length: number;
-  feature_flags: number;
+  operations: number;
 };
 
 export type ControllerFsListEntry = {

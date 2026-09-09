@@ -216,7 +216,7 @@ jobs:
       - name: Build candidate packages
         env:
           APPLE_SIGNING_IDENTITY: ${{ matrix.apple_signing_identity }}
-        run: npm run tauri -- build ${{ matrix.args }}
+        run: npm run tauri -- build ${{ matrix.args }} -- --locked
 
       - name: Collect candidate packages
         shell: bash

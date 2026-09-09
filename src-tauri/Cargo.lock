@@ -927,6 +927,11 @@ dependencies = [
 ]
 
 [[package]]
+name = "filesystem-rpc"
+version = "0.0.0"
+source = "git+https://github.com/open-control/bridge.git?rev=b3c470a53a5d7a253a5fa24c396bfc9ec83e0690#b3c470a53a5d7a253a5fa24c396bfc9ec83e0690"
+
+[[package]]
 name = "find-msvc-tools"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2143,10 +2148,11 @@ dependencies = [
 
 [[package]]
 name = "ms-manager"
-version = "0.1.4-beta.3"
+version = "0.1.4-beta.4"
 dependencies = [
  "chrono",
  "clipboard-win",
+ "filesystem-rpc",
  "fs2",
  "ms-manager-core",
  "notify",

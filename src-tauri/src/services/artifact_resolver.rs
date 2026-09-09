@@ -231,8 +231,9 @@ mod tests {
 
     #[test]
     fn installed_health_is_not_ready_without_payload() {
-        let layout = PayloadLayout::resolve(Some("C:\\missing-payload-root")).unwrap();
-        let status = management_artifact_health(&layout, None);
+        let root = std::env::temp_dir().join("ms-manager-missing-payload-root");
+        let layout = PayloadLayout::resolve(Some(root.to_str().unwrap())).unwrap();
+        let status = installed_artifact_health(&layout, None);
         assert_eq!(status.source, ArtifactSource::Installed);
         assert!(!status.ready);
     }
