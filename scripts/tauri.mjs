@@ -4,7 +4,7 @@ import { createRequire } from "node:module";
 import { posix, win32 } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { projectWindowsMsiVersion, shouldInjectWindowsMsiVersion } from "./tauri_versioning.mjs";
+import { projectWindowsMsiVersion, shouldInjectWindowsMsiVersion, withWindowsMsiVersion } from "./tauri_versioning.mjs";
 
 const packageJsonUrl = new URL("../package.json", import.meta.url);
 
@@ -186,23 +186,12 @@ export function resolveCargoEnvironment({
 function runTauri(forwardedArgs) {
   const require = createRequire(import.meta.url);
   const tauriCliEntrypoint = require.resolve("@tauri-apps/cli/tauri.js");
-  const tauriArgs = [...forwardedArgs];
+  let tauriArgs = [...forwardedArgs];
 
   if (shouldInjectWindowsMsiVersion({ platform: process.platform, argv: forwardedArgs })) {
     const appVersion = readPackageVersion();
     const msiVersion = projectWindowsMsiVersion(appVersion);
-    tauriArgs.push(
-      "--config",
-      JSON.stringify({
-        bundle: {
-          windows: {
-            wix: {
-              version: msiVersion,
-            },
-          },
-        },
-      }),
-    );
+    tauriArgs = withWindowsMsiVersion(tauriArgs, msiVersion);
     console.error(`[tauri-wrapper] using MSI version ${msiVersion} for app version ${appVersion}`);
   }
 

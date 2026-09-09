@@ -78,7 +78,19 @@ export function projectWindowsMsiVersion(version) {
   return `${parsed.major}.${parsed.minor}.${projectedPatch}`;
 }
 
+export function withWindowsMsiVersion(argv, msiVersion) {
+  const args = [...argv];
+  const cargoSeparator = args.indexOf("--");
+  // Tauri options must precede the arguments forwarded to Cargo.
+  args.splice(cargoSeparator < 0 ? args.length : cargoSeparator, 0,
+    "--config", JSON.stringify({ bundle: { windows: { wix: { version: msiVersion } } } }),
+  );
+  return args;
+}
+
 export function shouldInjectWindowsMsiVersion({ platform, argv }) {
+  const cargoSeparator = argv.indexOf("--");
+  if (cargoSeparator >= 0) argv = argv.slice(0, cargoSeparator);
   if (argv.length === 0) {
     return false;
   }

@@ -2,7 +2,22 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import { resolveCargoEnvironment } from "../tauri.mjs";
-import { projectWindowsMsiVersion, shouldInjectWindowsMsiVersion } from "../tauri_versioning.mjs";
+import { projectWindowsMsiVersion, shouldInjectWindowsMsiVersion, withWindowsMsiVersion } from "../tauri_versioning.mjs";
+
+test("keeps MSI configuration with Tauri and forwards locked arguments only to Cargo", () => {
+  const input = ["build", "--bundles", "msi", "--", "--locked"];
+  const args = withWindowsMsiVersion(input, projectWindowsMsiVersion("0.1.4-beta.4"));
+  const separator = args.indexOf("--");
+  assert.deepEqual(args.slice(separator + 1), ["--locked"]);
+  assert.equal(args[separator - 2], "--config");
+  assert.equal(JSON.parse(args[separator - 1]).bundle.windows.wix.version, "0.1.403");
+  assert.deepEqual(input, ["build", "--bundles", "msi", "--", "--locked"]);
+  assert.deepEqual(withWindowsMsiVersion(["bundle"], "0.1.403"),
+    ["bundle", "--config", args[separator - 1]]);
+  assert.equal(shouldInjectWindowsMsiVersion({
+    platform: "win32", argv: ["build", "--", "--no-bundle"],
+  }), true);
+});
 
 test("projects stable release versions to an MSI-safe numeric version", () => {
   assert.equal(projectWindowsMsiVersion("0.1.2"), "0.1.299");
