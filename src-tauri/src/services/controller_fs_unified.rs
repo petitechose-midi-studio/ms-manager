@@ -1,11 +1,13 @@
-//! First unified-protocol vertical slice. Not connected to the UI until migration completes.
-use super::controller_fs::{BridgeBinaryClient, ControllerRpcBatchItem, FsMessageId};
+//! Single wire client shared by the application and the integrated interoperability tests.
+use super::controller_transport::{BridgeBinaryClient, ControllerRpcBatchItem};
 use filesystem_rpc::{self as wire, Error, Frame, Operation, State};
 use std::time::Duration;
+use tokio::io::{AsyncRead, AsyncReadExt};
 
 #[derive(Debug)]
 pub enum Failure {
     Transport(String),
+    Local(String),
     Protocol,
     Remote(Error),
     Conditional(Error, ConditionalResult),
@@ -25,6 +27,14 @@ pub struct ConditionalResult {
     pub outcome: u8,
     pub subject: u8,
     pub observed: Option<[u8; 32]>,
+}
+
+#[derive(Debug)]
+pub struct Capabilities {
+    pub operations: u32,
+    pub max_chunk: u32,
+    pub max_upload: u32,
+    pub max_path: u16,
 }
 
 pub struct Client {
@@ -80,7 +90,7 @@ impl Client {
         let mut replayed = false;
         let response = match self
             .bridge
-            .controller_rpc(bytes, FsMessageId::JobResponse, 1000)
+            .controller_rpc(bytes, wire::RESPONSE, 1000)
             .await
         {
             Ok(response) => response,
@@ -92,7 +102,7 @@ impl Client {
                 let mut bytes = vec![0; wire::HEADER + body.len()];
                 wire::encode(frame, &mut bytes).ok_or(Failure::Protocol)?;
                 self.bridge
-                    .controller_rpc(bytes, FsMessageId::JobResponse, 1000)
+                    .controller_rpc(bytes, wire::RESPONSE, 1000)
                     .await
                     .map_err(|_| Failure::Ambiguous)?
             }
@@ -102,7 +112,7 @@ impl Client {
         Ok(response)
     }
 
-    pub async fn capabilities(&mut self) -> Result<(), Failure> {
+    pub async fn capabilities(&mut self) -> Result<Capabilities, Failure> {
         let bytes = self
             .request(Operation::Capabilities, &[], 0, 0, 0, false)
             .await?;
@@ -116,16 +126,38 @@ impl Client {
         if mask & 0x7fff != 0x7fff || chunk < 30_720 || max_upload < 524_288 {
             return Err(Failure::Protocol);
         }
-        Ok(())
+        let max_path = u16::from_le_bytes(frame.body[16..18].try_into().unwrap());
+        if max_path == 0 || max_path > 192 || frame.body[18] != 1 || frame.body[19] != 32 {
+            return Err(Failure::Protocol);
+        }
+        Ok(Capabilities {
+            operations: mask,
+            max_chunk: chunk,
+            max_upload,
+            max_path,
+        })
     }
 
     /// Core assigns the upload identity; the caller retains the mutation nonce for retries.
+    #[cfg(test)]
     pub async fn upload(&mut self, path: &str, data: &[u8], nonce: u32) -> Result<(), Failure> {
+        self.upload_reader(path, &mut &data[..], data.len(), nonce, |_, _| {})
+            .await
+    }
+
+    pub async fn upload_reader<R: AsyncRead + Unpin, F: FnMut(usize, usize)>(
+        &mut self,
+        path: &str,
+        reader: &mut R,
+        size: usize,
+        nonce: u32,
+        mut on_progress: F,
+    ) -> Result<(), Failure> {
         self.capabilities().await?;
-        if nonce == 0 || data.len() > 524_288 {
+        if nonce == 0 || size > 524_288 {
             return Err(Failure::Protocol);
         }
-        let mut begin = (data.len() as u32).to_le_bytes().to_vec();
+        let mut begin = (size as u32).to_le_bytes().to_vec();
         begin.extend_from_slice(&path_body(path)?);
         let admitted = self
             .request(Operation::UploadBegin, &begin, 0, 0, 0, false)
@@ -140,11 +172,18 @@ impl Client {
         }
         // If Begin's reply is lost, its identity is unknown: let Core expire the
         // staging session. Guessing an Abort identity could cancel another upload.
-        for (i, data) in data.chunks(30_720).enumerate() {
-            let mut body = session.to_le_bytes().to_vec();
-            body.extend_from_slice(&((i * 30_720) as u32).to_le_bytes());
-            body.extend_from_slice(&(data.len() as u16).to_le_bytes());
-            body.extend_from_slice(data);
+        let mut offset = 0usize;
+        let mut body = vec![0; 10 + 30_720.min(size)];
+        while offset < size {
+            let count = (size - offset).min(30_720);
+            body.resize(10 + count, 0);
+            body[..4].copy_from_slice(&session.to_le_bytes());
+            body[4..8].copy_from_slice(&(offset as u32).to_le_bytes());
+            body[8..10].copy_from_slice(&(count as u16).to_le_bytes());
+            if let Err(error) = reader.read_exact(&mut body[10..]).await {
+                self.abort(session).await;
+                return Err(Failure::Local(error.to_string()));
+            }
             let response = match self
                 .request(Operation::UploadChunk, &body, 0, 0, 0, false)
                 .await
@@ -157,10 +196,25 @@ impl Client {
             };
             let result = wire::decode(&response).ok_or(Failure::Protocol)?;
             if result.state != State::Complete
-                || result.body != ((i * 30_720 + data.len()) as u32).to_le_bytes()
+                || result.body != ((offset + count) as u32).to_le_bytes()
             {
                 self.abort(session).await;
                 return Err(Failure::Protocol);
+            }
+            offset += count;
+            on_progress(offset, size);
+        }
+        // Detect a source that grew after metadata was read, before committing.
+        let mut extra = [0];
+        match reader.read(&mut extra).await {
+            Ok(0) => {}
+            Ok(_) => {
+                self.abort(session).await;
+                return Err(Failure::Local("Source changed size during upload".into()));
+            }
+            Err(error) => {
+                self.abort(session).await;
+                return Err(Failure::Local(error.to_string()));
             }
         }
         let result = self
@@ -275,6 +329,7 @@ impl Client {
         }
     }
 
+    #[cfg(test)]
     pub async fn read(&mut self, path: &str, offset: u32, size: u16) -> Result<Vec<u8>, Failure> {
         if size > 30_720 {
             return Err(Failure::Protocol);
@@ -361,7 +416,7 @@ impl Client {
             expected.push((self.sequence, count as usize));
             requests.push(ControllerRpcBatchItem {
                 payload,
-                expected_response_id: FsMessageId::JobResponse,
+                expected_response_id: wire::RESPONSE,
                 timeout_ms: 1000,
             });
             done += u32::from(count);
@@ -410,7 +465,13 @@ fn validate_response<'a>(
     {
         return Err(Failure::Protocol);
     }
-    if decoded.replayed && !replayed {
+    if decoded.replayed
+        && !replayed
+        && !matches!(
+            request.operation,
+            Operation::ConditionalReplace | Operation::ConditionalDelete
+        )
+    {
         return Err(Failure::Remote(Error::Conflict));
     }
     if decoded.state == State::Failed || decoded.state == State::Cancelled {
@@ -583,25 +644,31 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn read_batch_bounds_are_checked_before_transport() {
-        let mut client = Client::new(BridgeBinaryClient::new(0));
-        assert!(matches!(
-            client.read_batch("projects/a", 0, 8 * 30_720 + 1).await,
-            Err(Failure::Protocol)
-        ));
-        assert!(matches!(
-            client.read_batch("projects/a", u32::MAX, 1).await,
-            Err(Failure::Protocol)
-        ));
-        assert!(matches!(
-            client.read_batch("", 0, 1).await,
-            Err(Failure::Protocol)
-        ));
-        assert!(client
-            .read_batch("projects/a", 0, 0)
-            .await
+    #[test]
+    fn read_batch_bounds_are_checked_before_transport() {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
             .unwrap()
-            .is_empty());
+            .block_on(async {
+                let mut client = Client::new(BridgeBinaryClient::new(0));
+                assert!(matches!(
+                    client.read_batch("projects/a", 0, 8 * 30_720 + 1).await,
+                    Err(Failure::Protocol)
+                ));
+                assert!(matches!(
+                    client.read_batch("projects/a", u32::MAX, 1).await,
+                    Err(Failure::Protocol)
+                ));
+                assert!(matches!(
+                    client.read_batch("", 0, 1).await,
+                    Err(Failure::Protocol)
+                ));
+                assert!(client
+                    .read_batch("projects/a", 0, 0)
+                    .await
+                    .unwrap()
+                    .is_empty());
+            });
     }
 }

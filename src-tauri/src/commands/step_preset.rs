@@ -17,7 +17,7 @@ use crate::commands::controller_fs::{controller_fs_client, controller_fs_error};
 use crate::commands::local_fs::resolve_local_storage_path;
 use crate::services::artifact_resolver;
 use crate::services::controller_fs::{
-    ControllerFsClient, ControllerFsError, FsCapabilities, FsFileType, FsStatus, FS_RPC_SHA256_SIZE,
+    ControllerFsClient, ControllerFsError, FsCapabilities, FsFileType, FS_RPC_SHA256_SIZE,
 };
 use crate::state::AppState;
 
@@ -555,25 +555,8 @@ pub async fn remote_step_preset_delete(
                 };
             }
         };
-        if stat.status == FsStatus::NotFound {
+        if stat.file_type == FsFileType::Missing {
             return Ok(managed_step_preset_report(inspected, &before));
-        }
-        if stat.status != FsStatus::Ok {
-            let verification_error = ApiError::new(
-                "step_preset_remote_verification_failed",
-                format!(
-                    "controller returned {:?} while verifying Step Preset deletion",
-                    stat.status
-                ),
-            );
-            return match commit_result {
-                Ok(()) => Err(verification_error),
-                Err(commit_error) => Err(remote_commit_ambiguous_error(
-                    "delete",
-                    commit_error,
-                    verification_error,
-                )),
-            };
         }
         if stat.file_type != FsFileType::File || stat.size_bytes != before.len() as u32 {
             return Err(ApiError::new(
@@ -794,10 +777,8 @@ async fn commit_remote_step_preset_replace(
     match first {
         Ok(_) => Ok(()),
         Err(error) if conditional_mutation_may_be_committed(&error) => {
-            // Replay the exact operation immediately. This next filesystem RPC
-            // first runs firmware journal recovery; inserting a capabilities
-            // request here could itself fail on the still-pending journal and
-            // prevent the idempotent retry.
+            // The same nonce retrieves the retained result. Recovery and final
+            // content reconciliation remain the authority after a storage failure.
             client
                 .conditional_replace(
                     operation_id,
@@ -835,7 +816,8 @@ async fn commit_remote_step_preset_delete(
 fn conditional_mutation_may_be_committed(error: &ControllerFsError) -> bool {
     matches!(
         error.kind.as_str(),
-        "bridge_timeout"
+        "mutation_ambiguous"
+            | "bridge_timeout"
             | "bridge_unavailable"
             | "controller_rpc_failed"
             | "protocol_error"
@@ -1509,13 +1491,12 @@ mod tests {
     #[test]
     fn controller_path_capacity_is_checked_before_staging() {
         let capabilities = FsCapabilities {
-            status: FsStatus::Ok,
-            rpc_schema: 1,
+            protocol_version: filesystem_rpc::VERSION,
             max_chunk_size: 1024,
-            response_buffer_size: 1024,
+            max_upload_size: 524288,
             max_list_entries: 8,
             max_path_length: 12,
-            feature_flags: 1 << 3,
+            operations: 0x7fff,
         };
         assert!(ensure_remote_paths_fit(&capabilities, &["/short.mssp"]).is_ok());
         assert!(ensure_remote_paths_fit(&capabilities, &["/too-long-name.mssp"]).is_err());
