@@ -927,6 +927,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "filesystem-rpc"
+version = "0.0.0"
+
+[[package]]
 name = "find-msvc-tools"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2147,6 +2151,7 @@ version = "0.1.4-beta.3"
 dependencies = [
  "chrono",
  "clipboard-win",
+ "filesystem-rpc",
  "fs2",
  "ms-manager-core",
  "notify",
