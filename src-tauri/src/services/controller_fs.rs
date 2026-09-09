@@ -374,6 +374,7 @@ fn rpc_error(error: Failure) -> ControllerFsError {
                 Error::StorageCorrupt => "storage_corrupt",
                 Error::StorageFailure => "storage_failure",
                 Error::TooLarge => "too_large",
+                Error::LifetimeChanged => "session_changed",
                 Error::ResultExpired => "result_expired",
                 Error::CancelTooLate => "cancel_too_late",
                 Error::Cancelled => "cancelled",

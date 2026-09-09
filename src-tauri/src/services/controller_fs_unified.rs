@@ -40,12 +40,14 @@ pub struct Capabilities {
 pub struct Client {
     bridge: BridgeBinaryClient,
     sequence: u64,
+    lifetime: u64,
 }
 impl Client {
     pub fn new(bridge: BridgeBinaryClient) -> Self {
         Self {
             bridge,
             sequence: 0,
+            lifetime: 0,
         }
     }
     pub async fn close(&mut self) {
@@ -73,6 +75,22 @@ impl Client {
         delay: u32,
         replay_on_loss: bool,
     ) -> Result<Vec<u8>, Failure> {
+        if self.lifetime == 0 {
+            self.capabilities().await?;
+        }
+        self.exchange(operation, body, nonce, identity, delay, replay_on_loss)
+            .await
+    }
+
+    async fn exchange(
+        &mut self,
+        operation: Operation,
+        body: &[u8],
+        nonce: u32,
+        identity: u32,
+        delay: u32,
+        replay_on_loss: bool,
+    ) -> Result<Vec<u8>, Failure> {
         self.sequence = self.sequence.checked_add(1).ok_or(Failure::Protocol)?;
         let mut frame = Frame {
             operation,
@@ -84,6 +102,11 @@ impl Client {
             delay_ms: delay,
             body,
             replayed: false,
+            lifetime: if operation == Operation::Capabilities {
+                0
+            } else {
+                self.lifetime
+            },
         };
         let mut bytes = vec![0; wire::HEADER + body.len()];
         wire::encode(frame, &mut bytes).ok_or(Failure::Protocol)?;
@@ -114,7 +137,7 @@ impl Client {
 
     pub async fn capabilities(&mut self) -> Result<Capabilities, Failure> {
         let bytes = self
-            .request(Operation::Capabilities, &[], 0, 0, 0, false)
+            .exchange(Operation::Capabilities, &[], 0, 0, 0, false)
             .await?;
         let frame = wire::decode(&bytes).ok_or(Failure::Protocol)?;
         if frame.state != State::Complete || frame.body.len() != 20 {
@@ -130,6 +153,15 @@ impl Client {
         if max_path == 0 || max_path > 192 || frame.body[18] != 1 || frame.body[19] != 32 {
             return Err(Failure::Protocol);
         }
+        if frame.lifetime == 0 {
+            return Err(Failure::Protocol);
+        }
+        if self.lifetime != 0 && self.lifetime != frame.lifetime {
+            return Err(Failure::Remote(Error::LifetimeChanged));
+        }
+        // Pin for the entire client lifetime, including TCP reconnect and abort.
+        // Adopting a new epoch here could make an old upload ticket target new work.
+        self.lifetime = frame.lifetime;
         Ok(Capabilities {
             operations: mask,
             max_chunk: chunk,
@@ -391,6 +423,9 @@ impl Client {
         if size > 8 * 30_720 || offset.checked_add(size).is_none() {
             return Err(Failure::Protocol);
         }
+        if size != 0 && self.lifetime == 0 {
+            self.capabilities().await?;
+        }
         let mut requests = Vec::new();
         let mut expected = Vec::new();
         let mut done = 0;
@@ -410,6 +445,7 @@ impl Client {
                 delay_ms: 0,
                 body: &body,
                 replayed: false,
+                lifetime: self.lifetime,
             };
             let mut payload = vec![0; wire::HEADER + body.len()];
             wire::encode(frame, &mut payload).ok_or(Failure::Protocol)?;
@@ -440,6 +476,7 @@ impl Client {
                 delay_ms: 0,
                 body: &[],
                 replayed: false,
+                lifetime: self.lifetime,
             };
             let response = validate_response(bytes, request, false)?;
             if response.state != State::Complete || response.body.len() != count {
@@ -461,6 +498,7 @@ fn validate_response<'a>(
         || decoded.request_id != request.request_id
         || decoded.operation != request.operation
         || decoded.nonce != request.nonce
+        || (request.operation != Operation::Capabilities && decoded.lifetime != request.lifetime)
         || (request.operation_id != 0 && decoded.operation_id != request.operation_id)
     {
         return Err(Failure::Protocol);
@@ -475,6 +513,11 @@ fn validate_response<'a>(
         return Err(Failure::Remote(Error::Conflict));
     }
     if decoded.state == State::Failed || decoded.state == State::Cancelled {
+        if decoded.error == Error::LifetimeChanged
+            && (request.operation.retained() || request.operation.control())
+        {
+            return Err(Failure::Ambiguous);
+        }
         if !decoded.body.is_empty() {
             return Err(Failure::Conditional(
                 decoded.error,
@@ -572,6 +615,136 @@ fn path_body(path: &str) -> Result<Vec<u8>, Failure> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reboot_during_mutation_pins_retry_abort_and_renegotiation_to_old_lifetime() {
+        use tokio::{io::AsyncWriteExt, net::TcpListener};
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                for lose_admission in [false, true] {
+                    let listener = TcpListener::bind(("127.0.0.1", 0)).await.unwrap();
+                    let port = listener.local_addr().unwrap().port();
+                    let server = tokio::spawn(async move {
+                        let (mut stream, _) = listener.accept().await.unwrap();
+                        let mut capabilities = Vec::new();
+                        for n in [0x7fffu32, 30720, 524288, 30000] {
+                            capabilities.extend(n.to_le_bytes());
+                        }
+                        capabilities.extend([192, 0, 1, 32]);
+                        let stages = [
+                            (
+                                Operation::Capabilities,
+                                0,
+                                State::Complete,
+                                Error::None,
+                                0,
+                                11,
+                            ),
+                            (Operation::Mkdir, 11, State::Pending, Error::None, 7, 11),
+                            (
+                                if lose_admission {
+                                    Operation::Mkdir
+                                } else {
+                                    Operation::Poll
+                                },
+                                11,
+                                State::Failed,
+                                Error::LifetimeChanged,
+                                if lose_admission { 0 } else { 7 },
+                                11,
+                            ),
+                            (
+                                Operation::Capabilities,
+                                0,
+                                State::Complete,
+                                Error::None,
+                                0,
+                                22,
+                            ),
+                            (
+                                Operation::UploadAbort,
+                                11,
+                                State::Failed,
+                                Error::LifetimeChanged,
+                                0,
+                                11,
+                            ),
+                            (
+                                Operation::Capabilities,
+                                0,
+                                State::Complete,
+                                Error::None,
+                                0,
+                                22,
+                            ),
+                            (Operation::Stat, 22, State::Complete, Error::None, 0, 22),
+                        ];
+                        for (
+                            index,
+                            (operation, lifetime, state, error, identity, response_lifetime),
+                        ) in stages.into_iter().enumerate()
+                        {
+                            if index == 5 || (index == 2 && lose_admission) {
+                                stream = listener.accept().await.unwrap().0;
+                            }
+                            let mut header = [0; 16];
+                            stream.read_exact(&mut header).await.unwrap();
+                            assert_eq!(&header[..4], b"OCRQ");
+                            let length =
+                                u32::from_le_bytes(header[12..16].try_into().unwrap()) as usize;
+                            assert!(length <= wire::HEADER + wire::MAX_BODY);
+                            let mut payload = vec![0; length];
+                            stream.read_exact(&mut payload).await.unwrap();
+                            let mut frame = wire::decode(&payload).unwrap();
+                            assert_eq!((frame.operation, frame.lifetime), (operation, lifetime));
+                            frame.state = state;
+                            frame.error = error;
+                            frame.operation_id = identity;
+                            frame.delay_ms = if state == State::Pending { 1 } else { 0 };
+                            frame.lifetime = response_lifetime;
+                            frame.body = if operation == Operation::Capabilities {
+                                &capabilities
+                            } else if operation == Operation::Stat {
+                                &[1, 42, 0, 0, 0]
+                            } else {
+                                &[]
+                            };
+                            let lost = index == 1 && lose_admission;
+                            let mut response = vec![0; wire::HEADER + frame.body.len()];
+                            wire::encode(frame, &mut response).unwrap();
+                            if lost {
+                                response.clear();
+                            }
+                            let mut reply = b"OCRS".to_vec();
+                            reply.extend([1, if lost { 4 } else { 0 }]);
+                            reply.extend(&header[6..8]);
+                            reply.extend((response.len() as u32).to_le_bytes());
+                            reply.extend([0; 4]);
+                            reply.extend(response);
+                            stream.write_all(&reply).await.unwrap();
+                        }
+                    });
+                    let mut client = Client::new(BridgeBinaryClient::new(port));
+                    assert!(matches!(
+                        client.mkdir("projects/reboot", 99).await,
+                        Err(Failure::Ambiguous)
+                    ));
+                    assert!(matches!(
+                        client.capabilities().await,
+                        Err(Failure::Remote(Error::LifetimeChanged))
+                    ));
+                    client.abort(7).await;
+                    assert_eq!(client.lifetime, 11);
+                    client.close().await;
+                    let mut fresh = Client::new(BridgeBinaryClient::new(port));
+                    assert_eq!(fresh.stat("projects/new").await.unwrap(), (1, 42));
+                    server.await.unwrap();
+                }
+            });
+    }
 
     #[test]
     fn conditional_details_are_exact_and_canonical() {
